@@ -1,6 +1,7 @@
 package org.livenesscheck.kafka.spring;
 
 
+import org.springframework.boot.actuate.availability.LivenessStateHealthIndicator;
 import org.springframework.boot.autoconfigure.condition.AllNestedConditions;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -14,6 +15,9 @@ class LivenessCheckerCondition extends AllNestedConditions {
 
     @ConditionalOnClass(KafkaOperations.class)
     static class SpringKafkaInClassPath {}
+
+    @ConditionalOnClass(LivenessStateHealthIndicator.class)
+    static class SpringActuatorInClassPath {}
 
     @ConditionalOnProperty(value = "management.endpoint.health.probes.enabled", havingValue = "true")
     static class HealthProbesAreEnabled {}
