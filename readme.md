@@ -23,18 +23,18 @@ It monitors the progress and provides a liveness state based on their activity.
 
 The library beans can be configured using the `application.properties` file. Here are some key properties:
 
-```properties
+```yaml
 liveness:
-kafka:
-#Flag to enable/disable the scheduled periodic offset movement check
-#Optional: default is true
-scheduled:true
-#The period in seconds between checks
-#Optional: default is 600
-check-period-sec:600
-#The initial delay in seconds before the first check
-#Optional: default is 600
-check-initial-delay-sec:600
+  kafka:
+    #Flag to enable/disable the scheduled periodic offset movement check
+    #Optional: default is true
+    scheduled: true
+    #The period in seconds between checks
+    #Optional: default is 600
+    check-period-sec: 600
+    #The initial delay in seconds before the first check
+    #Optional: default is 600
+    check-initial-delay-sec: 600
 ```
 
 ## Testing
@@ -51,7 +51,7 @@ The application will automatically start monitoring Kafka consumers upon startup
 You can check the liveness state by accessing the `/actuator/health/liveness` endpoint.
 But Liveness Checks must be enabled explicitly in the `application.yml` file.
 
-```
+```yaml
 management:
   health:
     livenessstate:
