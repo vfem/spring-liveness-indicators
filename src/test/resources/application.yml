@@ -1,0 +1,19 @@
+management:
+  health:
+    livenessstate:
+      enabled: true
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+liveness:
+  kafka:
+    scheduled: false
+    check-period-sec: 5
+    check-initial-delay-sec: 2
+
+logging:
+  level:
+    org.springframework.kafka.listener: info
+    org.livenesscheck.kafka.spring: trace
