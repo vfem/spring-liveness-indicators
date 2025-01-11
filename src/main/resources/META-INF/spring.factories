@@ -1,2 +1,2 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
-    org.livenesscheck.kafka.spring.LivenessCheckersAutoConfiguration
+    io.github.vfem.livenesscheck.spring.kafka.LivenessCheckersAutoConfiguration

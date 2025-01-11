@@ -1,4 +1,4 @@
-package org.livenesscheck.kafka.spring;
+package io.github.vfem.livenesscheck.spring.kafka;
 
 import org.apache.commons.lang3.Validate;
 import org.apache.kafka.clients.admin.AdminClient;

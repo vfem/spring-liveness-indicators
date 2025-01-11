@@ -1,9 +1,9 @@
-package org.livenesscheck.kafka.spring;
+package io.github.vfem.livenesscheck.spring.kafka;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.livenesscheck.kafka.spring.config.BaseConfig;
+import io.github.vfem.livenesscheck.spring.kafka.config.BaseConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.availability.ApplicationAvailability;

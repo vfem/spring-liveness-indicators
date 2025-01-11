@@ -1,4 +1,4 @@
-package org.livenesscheck.kafka.spring;
+package io.github.vfem.livenesscheck.spring.kafka;
 
 
 import org.springframework.boot.actuate.availability.LivenessStateHealthIndicator;
