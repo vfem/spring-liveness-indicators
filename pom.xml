@@ -46,7 +46,6 @@
         <compile.plugin.version>3.13.0</compile.plugin.version>
         <sources.plugin.version>3.3.1</sources.plugin.version>
         <javadoc.plugin.version>3.11.2</javadoc.plugin.version>
-        <assembly.plugin.version>3.7.1</assembly.plugin.version>
         <gpg.plugin.version>3.2.7</gpg.plugin.version>
         <release.plugin.version>3.1.1</release.plugin.version>
     </properties>
@@ -122,27 +121,6 @@
                         <id>attach-javadocs</id>
                         <goals>
                             <goal>jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <version>${assembly.plugin.version}</version>
-                <configuration>
-                    <descriptorRefs>
-                        <descriptorRef>jar-with-dependencies</descriptorRef>
-                    </descriptorRefs>
-                    <appendAssemblyId>false</appendAssemblyId>
-                    <finalName>${project.artifactId}-${project.version}</finalName>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>assemble-all</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
                         </goals>
                     </execution>
                 </executions>
