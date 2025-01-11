@@ -48,7 +48,7 @@
         <javadoc.plugin.version>3.11.2</javadoc.plugin.version>
         <gpg.plugin.version>3.2.7</gpg.plugin.version>
         <release.plugin.version>3.1.1</release.plugin.version>
-        <central.publish.plugin.version>0.6.0</central.publish.plugin.version>
+        <central.publish.plugin.version>0.7.0</central.publish.plugin.version>
     </properties>
 
     <dependencies>
