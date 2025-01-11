@@ -79,3 +79,13 @@ Contributions are welcome! Please fork the repository and submit a pull request.
 
 This project is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE-2.0.txt) file for details.
 
+## Release
+
+- generate GPG key and deploy it to keyserver, e.g. ubuntu's keyserver.ubuntu.com
+- get token from Maven Central https://central.sonatype.com/account
+- copy it in to appropriate settings.xml, e.g. the default, server id is `central`
+- prepare release with `mvn release:prepare`
+- checkout newly created tag from the master branch
+- deploy version to Maven Central with `mvn deploy -Prelease`
+- find pushed artifacts in the https://central.sonatype.com/publishing/deployments and make a decision to release them or drop them
+
