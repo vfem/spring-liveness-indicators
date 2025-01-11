@@ -11,7 +11,7 @@
 
     <groupId>io.github.vfem.livenesscheck.spring</groupId>
     <artifactId>spring-liveness-indicators</artifactId>
-    <version>0.0.3-SNAPSHOT</version>
+    <version>0.0.3</version>
     <name>spring-liveness-indicators</name>
     <description>Spring Liveness Indicators</description>
     <url>https://github.com/vfem/spring-liveness-indicators</url>
@@ -36,7 +36,7 @@
         <connection>scm:git:git@github.com:vfem/spring-liveness-indicators.git</connection>
         <developerConnection>scm:git:git@github.com:vfem/spring-liveness-indicators.git</developerConnection>
         <url>https://github.com/vfem/spring-liveness-indicators/tree/master</url>
-        <tag>HEAD</tag>
+        <tag>spring-liveness-indicators-0.0.3</tag>
     </scm>
 
     <properties>
