@@ -1,9 +1,8 @@
 package io.github.vfem.livenesscheck.spring.kafka;
 
+import io.github.vfem.livenesscheck.spring.kafka.config.BaseConfig;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import io.github.vfem.livenesscheck.spring.kafka.config.BaseConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.availability.ApplicationAvailability;
@@ -19,7 +18,6 @@ import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
 
 import java.util.Collection;
 
@@ -29,7 +27,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 @SpringBootTest(classes = BaseConfig.class)
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)
-@ExtendWith(SpringExtension.class)
 @EmbeddedKafka(partitions = 4,
         topics = {"classTopic", "methodTopic1", "methodTopic2", "slowMethodTopic"}, ports = 9092)
 class CommittedOffsetMovementCheckIT {
@@ -98,7 +95,6 @@ class CommittedOffsetMovementCheckIT {
 
     @Test
     void failsLivenessIfNoProgress() throws InterruptedException {
-        //todo fix this test
         //given
         assertEquals(LivenessState.CORRECT, applicationAvailability.getLivenessState());
 
@@ -117,7 +113,6 @@ class CommittedOffsetMovementCheckIT {
 
         //then
         assertEquals(LivenessState.BROKEN, applicationAvailability.getLivenessState());
-
     }
 
     @Test
@@ -157,4 +152,4 @@ class CommittedOffsetMovementCheckIT {
         Assertions.assertEquals(LivenessState.CORRECT, applicationAvailability.getLivenessState());
     }
 
-}
+} 

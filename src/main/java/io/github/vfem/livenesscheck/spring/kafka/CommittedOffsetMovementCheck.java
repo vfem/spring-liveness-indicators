@@ -1,5 +1,6 @@
 package io.github.vfem.livenesscheck.spring.kafka;
 
+import jakarta.annotation.PreDestroy;
 import org.apache.commons.lang3.Validate;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.KafkaAdminClient;
@@ -35,7 +36,6 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 /**
  * This class checks the progress of committed offsets for Kafka consumers.
@@ -174,8 +174,13 @@ public class CommittedOffsetMovementCheck {
             Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> offsetResults;
             try {
                 offsetResults = listOffsetsResult.all().get();
+                if (offsetResults == null) {
+                    log.error("No latest offsets found for topic partitions for group {}, skipping", groupId);
+                    return;
+                }
             } catch (Exception e) {
-                log.error("Failed to retrieve latest offsets for topic partitions, skipping", e);
+                log.error("Failed to retrieve latest offsets for topic partitions for group {}, error message = {}, skipping",
+                        groupId, e.getMessage());
                 return;
             }
 
@@ -185,8 +190,13 @@ public class CommittedOffsetMovementCheck {
             Map<TopicPartition, OffsetAndMetadata> currentlyCommitted;
             try {
                 currentlyCommitted = partitionsOffsetFuture.get(10, TimeUnit.SECONDS);
+                if (currentlyCommitted == null) {
+                    log.error("Currently committed offsets are null for group {}, skipping", groupId);
+                    return;
+                }
             } catch (Exception e) {
-                log.error("Failed to retrieve consumer group offsets for group {}, skipping", groupId, e);
+                log.error("Failed to retrieve consumer group offsets for group {}, error message = {}, skipping",
+                        groupId, e.getMessage());
                 return;
             }
 
@@ -197,7 +207,15 @@ public class CommittedOffsetMovementCheck {
 
                 OffsetAndMetadata currentOffsetAndMetadata = currentlyCommitted.get(partition);
                 OffsetAndMetadata previousOffsetAndMetadata = previousOffset.get(partition);
-                long latestOffsetForPartition = offsetResults.get(partition).offset();
+
+                ListOffsetsResult.ListOffsetsResultInfo listOffsetsResultInfo = offsetResults.get(partition);
+
+                if (listOffsetsResultInfo == null) {
+                    log.error("No latest offset found for topic partition {} for groupId = {}", partition, groupId);
+                    return;
+                }
+
+                long latestOffsetForPartition = listOffsetsResultInfo.offset();
 
                 if (latestOffsetForPartition <= 0) {
                     log.trace("No latest offset found for topic partition {}", partition);
@@ -235,12 +253,6 @@ public class CommittedOffsetMovementCheck {
                 }
             }
         });
-    }
-
-    private Set<String> collectTopicsFromPartitions(Set<TopicPartition> assigned) {
-        return assigned.stream()
-                .map(TopicPartition::topic)
-                .collect(Collectors.toSet());
     }
 
     private Set<TopicPartition> extractAssigned(KafkaConsumer<?, ?> consumer) {
@@ -281,6 +293,32 @@ public class CommittedOffsetMovementCheck {
 
     public int getConsumersSize() {
         return consumers.size();
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("Shutting down CommittedOffsetMovementCheck");
+        if (!scheduledExecutor.isShutdown()) {
+            scheduledExecutor.shutdown();
+            try {
+                log.info("Waiting for CommittedOffsetMovementCheck to terminate");
+                if (!scheduledExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    log.info("Forcing shutdown of CommittedOffsetMovementCheck");
+                    scheduledExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                log.error("Interrupted while waiting for CommittedOffsetMovementCheck to terminate," +
+                        " forcing shutdown of CommittedOffsetMovementCheck", e);
+                scheduledExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (adminClient != null) {
+            log.info("Closing AdminClient");
+            adminClient.close();
+            log.info("AdminClient closed");
+        }
+        log.info("CommittedOffsetMovementCheck shutdown complete");
     }
 
 }
