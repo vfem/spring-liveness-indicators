@@ -4,7 +4,6 @@ import io.github.vfem.livenesscheck.spring.kafka.config.BaseConfig;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.availability.ApplicationAvailability;
 import org.springframework.boot.availability.LivenessState;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -42,9 +41,6 @@ class CommittedOffsetMovementCheckIT {
 
     @Autowired
     private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Value("${liveness.kafka.check-period-sec}")
-    private long checkPeriodSec;
 
     @Test
     void initExtractsKafkaConsumers() {

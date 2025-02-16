@@ -38,10 +38,15 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * This class checks the progress of committed offsets for Kafka consumers.
- * It periodically verifies if the offsets are moving forward and publishes a liveness event if they are not.
+ * CommittedOffsetMovementCheck is a utility class designed to monitor the progress of
+ * committed consumer offsets in a Kafka system.
+ * It periodically checks the consumer
+ * offsets to ensure they are progressing, indicating that the consumers are working
+ * as expected.
+ * If the offsets are not progressing, it publishes a liveness event
+ * indicating a broken state.
  */
-public class CommittedOffsetMovementCheck {
+public final class CommittedOffsetMovementCheck {
 
     private static final Logger log = LoggerFactory.getLogger(CommittedOffsetMovementCheck.class);
 
@@ -59,7 +64,7 @@ public class CommittedOffsetMovementCheck {
     /**
      * Constructor for CommittedOffsetMovementCheck.
      *
-     * @param scheduled          the flag which indicates that the check will be scheduled
+     * @param scheduled            the flag which indicates that the check will be scheduled
      * @param checkInitialDelaySec the initial delay before the first check in seconds
      * @param checkPeriodSec       the period between checks in seconds
      * @param applicationContext   the Spring application context
@@ -140,7 +145,7 @@ public class CommittedOffsetMovementCheck {
      * Checks the progress of the committed offsets for each consumer.
      * If the offsets have not progressed, it publishes a liveness event indicating a broken state.
      */
-    protected void checkConsumerProgress() {
+    void checkConsumerProgress() {
 
         consumers.forEach(consumer -> {
 
@@ -287,14 +292,40 @@ public class CommittedOffsetMovementCheck {
         }
     }
 
+    /**
+     * Checks if the consumers collection is empty.
+     *
+     * @return true if the consumers collection is empty; false otherwise
+     */
     public boolean isConsumersEmpty() {
         return consumers.isEmpty();
     }
 
+    /**
+     * Retrieves the size of the consumers collection.
+     *
+     * @return the number of consumers in the collection
+     */
     public int getConsumersSize() {
         return consumers.size();
     }
 
+    /**
+     * Handles the shutdown process of the CommittedOffsetMovementCheck component.
+     * <p>
+     * This method is executed during the destruction of the bean. It ensures a clean shutdown
+     * of the internal executor service used for scheduled tasks as well as the Kafka AdminClient.
+     * <p>
+     * Specifically, the method performs the following steps:
+     * - Logs the initiation of the shutdown process.
+     * - Shuts down the scheduled executor service if it is still running.
+     * - Waits up to 5 seconds for the executor to terminate gracefully.
+     * - If termination does not occur within the wait period, a forced shutdown is initiated.
+     * - Handles interruptions during the waiting period, forcibly shutting down the executor
+     * and reasserting the thread's interrupt status.
+     * - Closes the Kafka AdminClient, if it is not null, to release any associated resources.
+     * - Logs the completion of the shutdown process.
+     */
     @PreDestroy
     public void shutdown() {
         log.info("Shutting down CommittedOffsetMovementCheck");
