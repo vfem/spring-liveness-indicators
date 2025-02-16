@@ -2,15 +2,49 @@
 
 ## Overview
 
-This project is a Spring Boot starter that provides liveness indicators.
-It monitors the progress and provides a liveness state based on their activity.
+This project is a Spring Boot starter that provides liveness indicators for Kafka consumers.
+It monitors consumer progress and provides a liveness state based on their activity,
+helping you ensure the health of your Kafka-based applications.
+
+
+## Quick Start
+
+1. Ensure you meet the requirements:
+    - Java 17 or higher
+    - Spring Boot 2.4.x
+    - Maven 3.6.0 or higher
+    - Kafka
+
+2. Enable liveness checks in `application.yml`:
+   ```yaml
+   management:
+     health:
+       livenessstate:
+         enabled: true
+     endpoint:
+       health:
+         probes:
+           enabled: true
+   ```
+
+3. Configure liveness monitoring in `application.properties`:
+   ```yaml
+   liveness:
+     kafka:
+       scheduled: true              # Enable periodic checks
+       check-period-sec: 600       # Check interval
+       check-initial-delay-sec: 600 # Initial delay
+   ```
 
 ## Features
 
 ### Kafka Liveness Indicator
+- Monitors Kafka consumer progress for Spring Kafka topic listeners
+- Evaluates consumer state and group health
+- Checks if topics are empty or fully consumed
+- Provides automatic monitoring on startup
+- Exposes health state via `/actuator/health/liveness` endpoint
 
-- Monitors Kafka consumer progress for Spring Kafka topic listeners.
-- Takes into account state of the consumer and topic and group state, is it empty or is it consumed completely.
 
 ## Requirements
 
@@ -39,11 +73,11 @@ liveness:
 
 ## Testing
 
-To run the tests, use the following command:
-
+Execute all tests with:
 ```sh
 mvn test
 ```
+
 
 ## Usage
 
@@ -79,13 +113,25 @@ Contributions are welcome! Please fork the repository and submit a pull request.
 
 This project is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE-2.0.txt) file for details.
 
-## Release
+## Release Process
 
-- generate GPG key and deploy it to keyserver, e.g. ubuntu's keyserver.ubuntu.com
-- get token from Maven Central https://central.sonatype.com/account
-- copy it in to appropriate settings.xml, e.g. the default, server id is `central`
-- prepare release with `mvn release:prepare`
-- checkout newly created tag from the master branch
-- deploy version to Maven Central with `mvn deploy -Prelease`
-- find pushed artifacts in the https://central.sonatype.com/publishing/deployments and make a decision to release them or drop them
+1. GPG Key Setup:
+    - Generate GPG key
+    - Deploy to keyserver (e.g., keyserver.ubuntu.com)
+
+2. Maven Central Setup:
+    - Obtain token from https://central.sonatype.com/account
+    - Configure in settings.xml with server id `central`
+
+3. Release Steps:
+   ```sh
+   mvn release:prepare                 # Prepare the release
+   git checkout <new-version-tag>      # Switch to release tag
+   mvn deploy -Prelease               # Deploy to Maven Central
+   ```
+
+4. Finalize:
+    - Review artifacts at https://central.sonatype.com/publishing/deployments
+    - Release or drop the deployment
+
 
