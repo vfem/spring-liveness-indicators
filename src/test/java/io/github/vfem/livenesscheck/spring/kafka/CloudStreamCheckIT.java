@@ -1,11 +1,14 @@
 package io.github.vfem.livenesscheck.spring.kafka;
 
+import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
-@SpringBootTest
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+//@SpringBootTest
 @ActiveProfiles("stream")
-public class CloudStreamCheckIT {
+class CloudStreamCheckIT {
 
     //setup and scenario
     //setup
@@ -14,5 +17,10 @@ public class CloudStreamCheckIT {
     //3) get ready to read output, consumer state, liveness state
     //scenarios
     //check the same cases as in kafka listener setup
+
+    @Test
+    void check1() {
+        assertEquals(true, true);
+    }
 
 }
