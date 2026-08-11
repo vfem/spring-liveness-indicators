@@ -89,6 +89,8 @@ class CommittedOffsetMovementCheckIT {
         Assertions.assertEquals(LivenessState.CORRECT, livenessState);
     }
 
+    //todo flaky - sleeps are not consistent and we have them in both places
+    // in test and in consumer too
     @Test
     void failsLivenessIfNoProgress() throws InterruptedException {
         //given
