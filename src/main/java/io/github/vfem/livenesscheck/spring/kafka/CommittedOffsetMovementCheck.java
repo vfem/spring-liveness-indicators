@@ -3,7 +3,6 @@ package io.github.vfem.livenesscheck.spring.kafka;
 import jakarta.annotation.PreDestroy;
 import org.apache.commons.lang3.Validate;
 import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.KafkaAdminClient;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
@@ -29,10 +28,10 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -55,7 +54,7 @@ public final class CommittedOffsetMovementCheck {
     private final long checkInitialDelaySec;
     private final ApplicationContext applicationContext;
     private final Map<String, Map<TopicPartition, OffsetAndMetadata>> groupsTopicPartitionOffsets = new HashMap<>();
-    private final Set<KafkaConsumer<?, ?>> consumers = new HashSet<>();
+    private final Set<KafkaConsumer<?, ?>> consumers = new CopyOnWriteArraySet<>();
     private final AdminClient adminClient;
 
 
@@ -83,7 +82,7 @@ public final class CommittedOffsetMovementCheck {
         this.checkInitialDelaySec = checkInitialDelaySec;
         this.checkPeriodSec = checkPeriodSec;
         this.applicationContext = applicationContext;
-        this.adminClient = KafkaAdminClient.create(kafkaAdminConfig);
+        this.adminClient = AdminClient.create(kafkaAdminConfig);
     }
 
     /**
@@ -178,11 +177,16 @@ public final class CommittedOffsetMovementCheck {
             ListOffsetsResult listOffsetsResult = adminClient.listOffsets(offsetSpecMap);
             Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> offsetResults;
             try {
-                offsetResults = listOffsetsResult.all().get();
+                offsetResults = listOffsetsResult.all().get(10, TimeUnit.SECONDS);
                 if (offsetResults == null) {
                     log.error("No latest offsets found for topic partitions for group {}, skipping", groupId);
                     return;
                 }
+            } catch (InterruptedException e) {
+                log.error("Failed to retrieve latest offsets for topic partitions for group {}, error message = {}, skipping",
+                        groupId, e.getMessage());
+                Thread.currentThread().interrupt();
+                return;
             } catch (Exception e) {
                 log.error("Failed to retrieve latest offsets for topic partitions for group {}, error message = {}, skipping",
                         groupId, e.getMessage());
@@ -199,6 +203,11 @@ public final class CommittedOffsetMovementCheck {
                     log.error("Currently committed offsets are null for group {}, skipping", groupId);
                     return;
                 }
+            } catch (InterruptedException e) {
+                log.error("Failed to retrieve consumer group offsets for group {}, error message = {}, skipping",
+                        groupId, e.getMessage());
+                Thread.currentThread().interrupt();
+                return;
             } catch (Exception e) {
                 log.error("Failed to retrieve consumer group offsets for group {}, error message = {}, skipping",
                         groupId, e.getMessage());
@@ -293,16 +302,16 @@ public final class CommittedOffsetMovementCheck {
     }
 
     /**
-     * Checks if the consumers collection is empty.
+     * Checks if the consumers' collection is empty.
      *
-     * @return true if the consumers collection is empty; false otherwise
+     * @return true if the consumers' collection is empty; false otherwise
      */
     public boolean isConsumersEmpty() {
         return consumers.isEmpty();
     }
 
     /**
-     * Retrieves the size of the consumers collection.
+     * Retrieves the size of the consumers' collection.
      *
      * @return the number of consumers in the collection
      */
