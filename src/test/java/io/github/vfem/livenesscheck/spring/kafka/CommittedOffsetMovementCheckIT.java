@@ -4,6 +4,8 @@ import io.github.vfem.livenesscheck.spring.kafka.config.BaseConfig;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.Status;
 import org.springframework.boot.availability.ApplicationAvailability;
 import org.springframework.boot.availability.LivenessState;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -22,12 +24,13 @@ import java.util.Collection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @SpringBootTest(classes = BaseConfig.class)
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)
 @EmbeddedKafka(partitions = 4,
-        topics = {"classTopic", "methodTopic1", "methodTopic2", "slowMethodTopic"}, ports = 9092)
+        topics = {"classTopic", "methodTopic1", "methodTopic2", "slowMethodTopic"})
 class CommittedOffsetMovementCheckIT {
 
     @Autowired
@@ -51,6 +54,14 @@ class CommittedOffsetMovementCheckIT {
     }
 
     @Test
+    void healthIndicatorContainsDetails() {
+        Health health = committedOffsetMovementCheck.health();
+        assertNotNull(health);
+        assertEquals(Status.UP, health.getStatus());
+        assertEquals(5, health.getDetails().get("trackedConsumers"));
+    }
+
+    @Test
     void doesntFailWhenTopicCompletelyConsumed() throws InterruptedException {
         kafkaTemplate.send(
                 MessageBuilder.withPayload("test_payload")
@@ -63,34 +74,37 @@ class CommittedOffsetMovementCheckIT {
                         .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key2")
                         .build());
         kafkaTemplate.send(
-                MessageBuilder.withPayload("test_payload2")
+                MessageBuilder.withPayload("test_payload3")
                         .setHeader(KafkaHeaders.TOPIC, "classTopic")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key2")
+                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key3")
                         .build());
         kafkaTemplate.flush();
         Thread.sleep(5 * 1000 + 1000);
-        committedOffsetMovementCheck.checkConsumerProgress();
+
+        Health health = committedOffsetMovementCheck.health();
+        assertEquals(Status.UP, health.getStatus());
         Assertions.assertEquals(LivenessState.CORRECT, applicationAvailability.getLivenessState());
 
         Thread.sleep(2 * 1000 + 1000);
-        committedOffsetMovementCheck.checkConsumerProgress();
+        Health health2 = committedOffsetMovementCheck.health();
+        assertEquals(Status.UP, health2.getStatus());
         Assertions.assertEquals(LivenessState.CORRECT, applicationAvailability.getLivenessState());
     }
 
     @Test
     void doesntFailWhenTopicIsEmpty() throws InterruptedException {
-        committedOffsetMovementCheck.checkConsumerProgress();
+        Health health = committedOffsetMovementCheck.health();
+        assertEquals(Status.UP, health.getStatus());
         LivenessState livenessState = applicationAvailability.getLivenessState();
         Assertions.assertEquals(LivenessState.CORRECT, livenessState);
 
         Thread.sleep(2 * 1000 + 1000);
-        committedOffsetMovementCheck.checkConsumerProgress();
+        Health health2 = committedOffsetMovementCheck.health();
+        assertEquals(Status.UP, health2.getStatus());
         livenessState = applicationAvailability.getLivenessState();
         Assertions.assertEquals(LivenessState.CORRECT, livenessState);
     }
 
-    //todo flaky - sleeps are not consistent and we have them in both places
-    // in test and in consumer too
     @Test
     void failsLivenessIfNoProgress() throws InterruptedException {
         //given
@@ -104,10 +118,15 @@ class CommittedOffsetMovementCheckIT {
         kafkaTemplate.flush();
 
         //when
-        //no messages were sent to slow processing topic
-        committedOffsetMovementCheck.checkConsumerProgress();
+        //first check records baseline
+        Health initialHealth = committedOffsetMovementCheck.health();
+        assertEquals(Status.UP, initialHealth.getStatus());
+
         Thread.sleep(2000);
-        committedOffsetMovementCheck.checkConsumerProgress();
+
+        //second check detects stalled consumer
+        Health secondHealth = committedOffsetMovementCheck.health();
+        assertEquals(Status.DOWN, secondHealth.getStatus());
 
         //then
         assertEquals(LivenessState.BROKEN, applicationAvailability.getLivenessState());
@@ -136,18 +155,42 @@ class CommittedOffsetMovementCheckIT {
                         .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key2")
                         .build());
         kafkaTemplate.send(
-                MessageBuilder.withPayload("test_payload2")
+                MessageBuilder.withPayload("test_payload3")
                         .setHeader(KafkaHeaders.TOPIC, "classTopic")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key2")
+                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key3")
                         .build());
         kafkaTemplate.flush();
-        Thread.sleep(2_000);
-        committedOffsetMovementCheck.checkConsumerProgress();
+        Thread.sleep(2000);
+
+        Health health = committedOffsetMovementCheck.health();
+        assertEquals(Status.UP, health.getStatus());
         Assertions.assertEquals(LivenessState.CORRECT, applicationAvailability.getLivenessState());
 
         Thread.sleep(2 * 1000 + 1000);
-        committedOffsetMovementCheck.checkConsumerProgress();
+        Health health2 = committedOffsetMovementCheck.health();
+        assertEquals(Status.UP, health2.getStatus());
         Assertions.assertEquals(LivenessState.CORRECT, applicationAvailability.getLivenessState());
     }
 
-} 
+    @Test
+    void multipleTopicsConsumedSuccessfully() throws InterruptedException {
+        kafkaTemplate.send(
+                MessageBuilder.withPayload("payload1")
+                        .setHeader(KafkaHeaders.TOPIC, "methodTopic1")
+                        .setHeader(KafkaHeaders.MESSAGE_KEY, "k1")
+                        .build());
+        kafkaTemplate.send(
+                MessageBuilder.withPayload("payload2")
+                        .setHeader(KafkaHeaders.TOPIC, "methodTopic2")
+                        .setHeader(KafkaHeaders.MESSAGE_KEY, "k2")
+                        .build());
+        kafkaTemplate.flush();
+
+        Thread.sleep(4000);
+
+        Health health = committedOffsetMovementCheck.health();
+        assertEquals(Status.UP, health.getStatus());
+        assertEquals(LivenessState.CORRECT, applicationAvailability.getLivenessState());
+    }
+
+}

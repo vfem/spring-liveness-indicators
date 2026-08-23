@@ -44,15 +44,11 @@ public class LivenessCheckersAutoConfiguration {
     @Bean
     @Autowired
     public CommittedOffsetMovementCheck committedOffsetMovementCheck(
-            @Value("${liveness.kafka.scheduled:true}") Boolean scheduled,
-            @Value("${liveness.kafka.check-initial-delay-sec:600}") long checkInitialDelaySec,
-            @Value("${liveness.kafka.check-period-sec:600}") long checkPeriodSec,
+            @Value("${liveness.kafka.admin-timeout-ms:5000}") long adminTimeoutMs,
             ApplicationContext applicationContext,
             KafkaAdmin kafkaAdmin) {
         return new CommittedOffsetMovementCheck(
-                scheduled,
-                checkInitialDelaySec,
-                checkPeriodSec,
+                adminTimeoutMs,
                 applicationContext,
                 kafkaAdmin.getConfigurationProperties()
         );
@@ -63,7 +59,7 @@ public class LivenessCheckersAutoConfiguration {
 ### Injected Dependencies:
 - **`KafkaAdmin`**: Provided by Spring Kafka configuration; used to retrieve `kafkaAdmin.getConfigurationProperties()` for creating the Kafka `AdminClient`.
 - **`ApplicationContext`**: Used to look up the `KafkaListenerEndpointRegistry` and publish `AvailabilityChangeEvent`.
-- **Properties**: Injected with sensible defaults (600s interval and delay).
+- **`adminTimeoutMs`**: Injected with sensible default (5000ms).
 
 ---
 

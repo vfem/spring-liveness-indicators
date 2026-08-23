@@ -15,18 +15,12 @@ public class LivenessCheckersAutoConfiguration {
     @Bean
     @Autowired
     public CommittedOffsetMovementCheck committedOffsetMovementCheck(
-            @Value("${liveness.kafka.scheduled:true}")
-            Boolean scheduled,
-            @Value("${liveness.kafka.check-initial-delay-sec:600}")
-            long checkInitialDelaySec,
-            @Value("${liveness.kafka.check-period-sec:600}")
-            long checkPeriodSec,
+            @Value("${liveness.kafka.admin-timeout-ms:5000}")
+            long adminTimeoutMs,
             ApplicationContext applicationContext,
             KafkaAdmin kafkaAdmin) {
         return new CommittedOffsetMovementCheck(
-                scheduled,
-                checkInitialDelaySec,
-                checkPeriodSec,
+                adminTimeoutMs,
                 applicationContext,
                 kafkaAdmin.getConfigurationProperties()
         );

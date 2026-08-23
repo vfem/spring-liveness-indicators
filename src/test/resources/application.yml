@@ -1,3 +1,7 @@
+spring:
+  kafka:
+    bootstrap-servers: ${spring.embedded.kafka.brokers}
+
 management:
   health:
     livenessstate:
@@ -9,9 +13,7 @@ management:
 
 liveness:
   kafka:
-    scheduled: false
-    check-period-sec: 5
-    check-initial-delay-sec: 2
+    admin-timeout-ms: 3000
 
 logging:
   level:

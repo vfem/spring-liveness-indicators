@@ -12,6 +12,8 @@ import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.availability.AvailabilityChangeEvent;
 import org.springframework.boot.availability.LivenessState;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -32,62 +34,52 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * CommittedOffsetMovementCheck is a utility class designed to monitor the progress of
- * committed consumer offsets in a Kafka system.
- * It periodically checks the consumer
- * offsets to ensure they are progressing, indicating that the consumers are working
- * as expected.
- * If the offsets are not progressing, it publishes a liveness event
- * indicating a broken state.
+ * CommittedOffsetMovementCheck monitors the progress of committed consumer offsets in Kafka.
+ * It implements {@link HealthIndicator} to perform on-demand checks when Actuator health
+ * endpoints (such as Kubernetes liveness probes) are invoked.
+ *
+ * If a consumer has pending messages on an assigned partition and fails to progress between checks,
+ * it returns {@link Health#down()} and publishes an {@link AvailabilityChangeEvent} indicating {@link LivenessState#BROKEN}.
  */
-public final class CommittedOffsetMovementCheck {
+public final class CommittedOffsetMovementCheck implements HealthIndicator {
 
     private static final Logger log = LoggerFactory.getLogger(CommittedOffsetMovementCheck.class);
 
-    private final boolean scheduled;
-    private final long checkPeriodSec;
-    private final long checkInitialDelaySec;
+    private final long adminTimeoutMs;
     private final ApplicationContext applicationContext;
     private final Map<String, Map<TopicPartition, OffsetAndMetadata>> groupsTopicPartitionOffsets = new HashMap<>();
     private final Set<KafkaConsumer<?, ?>> consumers = new CopyOnWriteArraySet<>();
     private final AdminClient adminClient;
 
-
-    private final ScheduledExecutorService scheduledExecutor = Executors.newSingleThreadScheduledExecutor();
-
     /**
      * Constructor for CommittedOffsetMovementCheck.
      *
-     * @param scheduled            the flag which indicates that the check will be scheduled
-     * @param checkInitialDelaySec the initial delay before the first check in seconds
-     * @param checkPeriodSec       the period between checks in seconds
-     * @param applicationContext   the Spring application context
-     * @param kafkaAdminConfig     the Kafka Configuration
+     * @param adminTimeoutMs     the timeout in milliseconds for AdminClient calls
+     * @param applicationContext the Spring application context
+     * @param kafkaAdminConfig   the Kafka Configuration
      */
-    public CommittedOffsetMovementCheck(boolean scheduled,
-                                        long checkInitialDelaySec,
-                                        long checkPeriodSec,
+    public CommittedOffsetMovementCheck(long adminTimeoutMs,
                                         ApplicationContext applicationContext,
                                         Map<String, Object> kafkaAdminConfig) {
         Validate.notNull(applicationContext, "ApplicationContext is null");
-        Validate.isTrue(checkInitialDelaySec > 0, "checkInitialDelaySec must be greater than 0 seconds");
-        Validate.isTrue(checkPeriodSec > 0, "checkPeriodSec must be greater than 0 seconds");
+        Validate.isTrue(adminTimeoutMs > 0, "adminTimeoutMs must be greater than 0");
 
-        this.scheduled = scheduled;
-        this.checkInitialDelaySec = checkInitialDelaySec;
-        this.checkPeriodSec = checkPeriodSec;
+        this.adminTimeoutMs = adminTimeoutMs;
         this.applicationContext = applicationContext;
         this.adminClient = AdminClient.create(kafkaAdminConfig);
     }
 
+    public CommittedOffsetMovementCheck(ApplicationContext applicationContext,
+                                        Map<String, Object> kafkaAdminConfig) {
+        this(5000L, applicationContext, kafkaAdminConfig);
+    }
+
     /**
-     * Initializes the check by extracting Kafka consumers from the listener containers
-     * and scheduling the periodic offset check.
+     * Initializes the check by extracting Kafka consumers from the listener containers.
      */
     @EventListener(ApplicationReadyEvent.class)
     public void init() {
@@ -111,12 +103,7 @@ public final class CommittedOffsetMovementCheck {
                 consumers.add(kafkaConsumer);
             }
         }
-
-        if (scheduled) {
-            scheduledExecutor.scheduleWithFixedDelay(this::checkConsumerProgress, checkInitialDelaySec, checkPeriodSec, TimeUnit.SECONDS);
-            log.info("Committed offset movement check scheduled with initial delay {} seconds and period {} seconds",
-                    checkInitialDelaySec, checkPeriodSec);
-        }
+        log.info("CommittedOffsetMovementCheck initialized with {} Kafka consumers", consumers.size());
     }
 
     /**
@@ -141,13 +128,34 @@ public final class CommittedOffsetMovementCheck {
     }
 
     /**
+     * Evaluates consumer progress as part of Spring Boot Actuator's health check.
+     *
+     * @return {@link Health#up()} if all consumers are progressing or caught up; {@link Health#down()} otherwise.
+     */
+    @Override
+    public Health health() {
+        boolean healthy = checkConsumerProgress();
+        if (healthy) {
+            return Health.up()
+                    .withDetail("trackedConsumers", consumers.size())
+                    .build();
+        }
+        return Health.down()
+                .withDetail("reason", "One or more Kafka consumers stalled while unconsumed messages remain")
+                .withDetail("trackedConsumers", consumers.size())
+                .build();
+    }
+
+    /**
      * Checks the progress of the committed offsets for each consumer.
      * If the offsets have not progressed, it publishes a liveness event indicating a broken state.
+     *
+     * @return true if all consumers are healthy or progressing, false if a consumer is stalled
      */
-    void checkConsumerProgress() {
+    public boolean checkConsumerProgress() {
+        AtomicBoolean isHealthy = new AtomicBoolean(true);
 
         consumers.forEach(consumer -> {
-
             if (consumer.groupMetadata() == null || consumer.groupMetadata().groupId() == null) {
                 log.trace("Consumer group metadata is null, skipping");
                 return;
@@ -168,8 +176,12 @@ public final class CommittedOffsetMovementCheck {
                 assigned.removeAll(paused);
             }
 
-            Map<TopicPartition, OffsetSpec> offsetSpecMap = new HashMap<>();
+            if (assigned.isEmpty()) {
+                log.trace("All assigned partitions are paused for group {}, skipping", groupId);
+                return;
+            }
 
+            Map<TopicPartition, OffsetSpec> offsetSpecMap = new HashMap<>();
             for (TopicPartition partition : assigned) {
                 offsetSpecMap.put(partition, OffsetSpec.latest());
             }
@@ -177,7 +189,7 @@ public final class CommittedOffsetMovementCheck {
             ListOffsetsResult listOffsetsResult = adminClient.listOffsets(offsetSpecMap);
             Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> offsetResults;
             try {
-                offsetResults = listOffsetsResult.all().get(10, TimeUnit.SECONDS);
+                offsetResults = listOffsetsResult.all().get(adminTimeoutMs, TimeUnit.MILLISECONDS);
                 if (offsetResults == null) {
                     log.error("No latest offsets found for topic partitions for group {}, skipping", groupId);
                     return;
@@ -194,11 +206,10 @@ public final class CommittedOffsetMovementCheck {
             }
 
             ListConsumerGroupOffsetsResult groupOffsets = adminClient.listConsumerGroupOffsets(groupId);
-
             KafkaFuture<Map<TopicPartition, OffsetAndMetadata>> partitionsOffsetFuture = groupOffsets.partitionsToOffsetAndMetadata();
             Map<TopicPartition, OffsetAndMetadata> currentlyCommitted;
             try {
-                currentlyCommitted = partitionsOffsetFuture.get(10, TimeUnit.SECONDS);
+                currentlyCommitted = partitionsOffsetFuture.get(adminTimeoutMs, TimeUnit.MILLISECONDS);
                 if (currentlyCommitted == null) {
                     log.error("Currently committed offsets are null for group {}, skipping", groupId);
                     return;
@@ -218,15 +229,13 @@ public final class CommittedOffsetMovementCheck {
                     .computeIfAbsent(groupId, k -> new HashMap<>());
 
             for (TopicPartition partition : assigned) {
-
                 OffsetAndMetadata currentOffsetAndMetadata = currentlyCommitted.get(partition);
                 OffsetAndMetadata previousOffsetAndMetadata = previousOffset.get(partition);
-
                 ListOffsetsResult.ListOffsetsResultInfo listOffsetsResultInfo = offsetResults.get(partition);
 
                 if (listOffsetsResultInfo == null) {
                     log.error("No latest offset found for topic partition {} for groupId = {}", partition, groupId);
-                    return;
+                    continue;
                 }
 
                 long latestOffsetForPartition = listOffsetsResultInfo.offset();
@@ -236,37 +245,37 @@ public final class CommittedOffsetMovementCheck {
                     continue;
                 }
 
+                long currentOffset = (currentOffsetAndMetadata != null) ? currentOffsetAndMetadata.offset() : 0L;
+                OffsetAndMetadata effectiveCurrent = (currentOffsetAndMetadata != null)
+                        ? currentOffsetAndMetadata
+                        : new OffsetAndMetadata(0L);
+
                 if (previousOffsetAndMetadata == null) {
                     log.trace("No previous offset found for topic partition {}", partition);
-                    previousOffset.put(
-                            partition,
-                            currentOffsetAndMetadata == null ? new OffsetAndMetadata(0) : currentOffsetAndMetadata
-                    );
+                    previousOffset.put(partition, effectiveCurrent);
                     continue;
                 }
 
-                if (currentOffsetAndMetadata == null) {
-                    log.info("No current offset found for topic partition {}", partition);
-                    return;
-                }
-
-                if (currentOffsetAndMetadata.offset() >= latestOffsetForPartition) {
+                if (currentOffset >= latestOffsetForPartition) {
                     log.trace("Consumer group {} has reached the end of topic partition {}. Current offset: {}, latest offset: {}",
-                            consumer.groupMetadata().groupId(), partition, currentOffsetAndMetadata.offset(), latestOffsetForPartition);
+                            groupId, partition, currentOffset, latestOffsetForPartition);
                     continue;
                 }
 
-                if (previousOffsetAndMetadata.offset() >= currentOffsetAndMetadata.offset()) {
+                if (previousOffsetAndMetadata.offset() >= currentOffset) {
                     log.error("Consumer group {} has not progressed on topic partition {} since last check. Previous offset: {}, current offset: {}",
-                            consumer.groupMetadata().groupId(), partition, previousOffsetAndMetadata.offset(), currentOffsetAndMetadata.offset());
+                            groupId, partition, previousOffsetAndMetadata.offset(), currentOffset);
                     AvailabilityChangeEvent.publish(applicationContext, LivenessState.BROKEN);
+                    isHealthy.set(false);
                 } else {
                     log.trace("Consumer group {} has progressed on topic partition {}. Previous offset: {}, current offset: {}",
-                            consumer.groupMetadata().groupId(), partition, previousOffsetAndMetadata.offset(), currentOffsetAndMetadata.offset());
-                    previousOffset.put(partition, currentOffsetAndMetadata);
+                            groupId, partition, previousOffsetAndMetadata.offset(), currentOffset);
+                    previousOffset.put(partition, effectiveCurrent);
                 }
             }
         });
+
+        return isHealthy.get();
     }
 
     private Set<TopicPartition> extractAssigned(KafkaConsumer<?, ?> consumer) {
@@ -320,39 +329,11 @@ public final class CommittedOffsetMovementCheck {
     }
 
     /**
-     * Handles the shutdown process of the CommittedOffsetMovementCheck component.
-     * <p>
-     * This method is executed during the destruction of the bean. It ensures a clean shutdown
-     * of the internal executor service used for scheduled tasks as well as the Kafka AdminClient.
-     * <p>
-     * Specifically, the method performs the following steps:
-     * - Logs the initiation of the shutdown process.
-     * - Shuts down the scheduled executor service if it is still running.
-     * - Waits up to 5 seconds for the executor to terminate gracefully.
-     * - If termination does not occur within the wait period, a forced shutdown is initiated.
-     * - Handles interruptions during the waiting period, forcibly shutting down the executor
-     * and reasserting the thread's interrupt status.
-     * - Closes the Kafka AdminClient, if it is not null, to release any associated resources.
-     * - Logs the completion of the shutdown process.
+     * Handles the shutdown process of the CommittedOffsetMovementCheck component by closing AdminClient.
      */
     @PreDestroy
     public void shutdown() {
         log.info("Shutting down CommittedOffsetMovementCheck");
-        if (!scheduledExecutor.isShutdown()) {
-            scheduledExecutor.shutdown();
-            try {
-                log.info("Waiting for CommittedOffsetMovementCheck to terminate");
-                if (!scheduledExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                    log.info("Forcing shutdown of CommittedOffsetMovementCheck");
-                    scheduledExecutor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                log.error("Interrupted while waiting for CommittedOffsetMovementCheck to terminate," +
-                        " forcing shutdown of CommittedOffsetMovementCheck", e);
-                scheduledExecutor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-        }
         if (adminClient != null) {
             log.info("Closing AdminClient");
             adminClient.close();

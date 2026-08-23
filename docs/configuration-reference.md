@@ -12,9 +12,7 @@ Configured in [`LivenessCheckersAutoConfiguration.java`](file:///c:/workdir/spri
 
 | Property | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `liveness.kafka.scheduled` | `Boolean` | `true` | Enables or disables background periodic offset movement checks via the internal executor. |
-| `liveness.kafka.check-initial-delay-sec` | `long` | `600` | Initial delay in seconds before the first scheduled offset evaluation begins. Must be `> 0`. |
-| `liveness.kafka.check-period-sec` | `long` | `600` | Interval in seconds between subsequent offset evaluations. Must be `> 0`. |
+| `liveness.kafka.admin-timeout-ms` | `long` | `5000` | Timeout in milliseconds for Kafka `AdminClient` queries (`listOffsets`, `listConsumerGroupOffsets`). |
 
 ---
 
@@ -45,9 +43,7 @@ management:
 
 liveness:
   kafka:
-    scheduled: true
-    check-initial-delay-sec: 120   # 2 minutes initial warmup
-    check-period-sec: 300          # Check every 5 minutes
+    admin-timeout-ms: 5000         # 5 seconds timeout for Kafka AdminClient RPCs
 ```
 
 ### Integration Test Example (`src/test/resources/application.yml`)
@@ -55,6 +51,10 @@ liveness:
 View: [`src/test/resources/application.yml`](file:///c:/workdir/spring-liveness-indicators/src/test/resources/application.yml)
 
 ```yaml
+spring:
+  kafka:
+    bootstrap-servers: ${spring.embedded.kafka.brokers}
+
 management:
   health:
     livenessstate:
@@ -66,9 +66,7 @@ management:
 
 liveness:
   kafka:
-    scheduled: false             # Disable background executor to allow manual invocation in tests
-    check-period-sec: 5
-    check-initial-delay-sec: 2
+    admin-timeout-ms: 3000
 ```
 
 ---

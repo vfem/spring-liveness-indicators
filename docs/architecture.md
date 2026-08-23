@@ -10,9 +10,9 @@ This document details the architectural design of **Spring Liveness Indicators**
 flowchart TD
     subgraph SpringContext["Spring Application Context"]
         Registry["KafkaListenerEndpointRegistry"]
-        LivenessCheck["CommittedOffsetMovementCheck"]
+        LivenessCheck["CommittedOffsetMovementCheck\n(implements HealthIndicator)"]
         EventPub["AvailabilityChangeEvent Publisher"]
-        Actuator["Spring Boot Actuator Health Probe\n(/actuator/health/liveness)"]
+        Actuator["Spring Boot Actuator Health Endpoint\n(/actuator/health & /actuator/health/liveness)"]
     end
 
     subgraph KafkaBroker["Kafka Cluster"]
@@ -21,10 +21,12 @@ flowchart TD
     end
 
     LivenessCheck -->|Extract Consumers on ApplicationReadyEvent| Registry
-    LivenessCheck -->|Periodic Query: listOffsets & listConsumerGroupOffsets| Admin
+    Actuator -->|Invoke health() on-demand| LivenessCheck
+    LivenessCheck -->|Query: listOffsets & listConsumerGroupOffsets| Admin
     Admin --> Topics
     LivenessCheck -->|If Stalled: AvailabilityChangeEvent.publish(BROKEN)| EventPub
     EventPub --> Actuator
+    LivenessCheck -->|Returns Health.up() or Health.down()| Actuator
 ```
 
 ---
@@ -33,15 +35,14 @@ flowchart TD
 
 1. **Bootstrap & Auto-Configuration**:
    - [`LivenessCheckersAutoConfiguration`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/LivenessCheckersAutoConfiguration.java) activates when [`LivenessCheckerCondition`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/LivenessCheckerCondition.java) evaluates to true.
-   - Instantiates [`CommittedOffsetMovementCheck`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java).
+   - Instantiates [`CommittedOffsetMovementCheck`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java) as a Spring Actuator `HealthIndicator`.
 
 2. **Initialization (`init()`)**:
-   - Triggered on [`ApplicationReadyEvent`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L92-L120).
+   - Triggered on [`ApplicationReadyEvent`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L73-L101).
    - Scans `KafkaListenerEndpointRegistry` for all `ConcurrentMessageListenerContainer` and `KafkaMessageListenerContainer` instances.
    - Extracts internal `KafkaConsumer` instances via reflection.
-   - Schedules periodic polling via `ScheduledExecutorService`.
 
-3. **Periodic Offset Evaluation (`checkConsumerProgress()`)**:
+3. **On-Demand Offset Evaluation (`health() -> checkConsumerProgress()`)**:
    - For each extracted `KafkaConsumer`:
      1. Extracts active `assignedPartitions` and excludes `pausedPartitions`.
      2. Queries Kafka `AdminClient.listOffsets(OffsetSpec.latest())` for latest partition end offsets.
@@ -50,11 +51,11 @@ flowchart TD
 
 4. **Liveness State Update**:
    - **Condition**: `currentOffset < latestOffset` AND `previousOffset >= currentOffset` (i.e. messages are pending, but the consumer has made zero progress since the previous check).
-   - **Action**: Publishes `AvailabilityChangeEvent.publish(applicationContext, LivenessState.BROKEN)`.
-   - **Normal condition**: If consumer has reached the end or moved forward, state remains intact and the cached offset is updated.
+   - **Action**: Publishes `AvailabilityChangeEvent.publish(applicationContext, LivenessState.BROKEN)` and returns `Health.down()`.
+   - **Normal condition**: If consumer has reached the end or moved forward, state remains intact, the cached offset is updated, and returns `Health.up()`.
 
 5. **Teardown (`shutdown()`)**:
-   - On `@PreDestroy` ([`CommittedOffsetMovementCheck.java#L338`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L338)), gracefully terminates `ScheduledExecutorService` (with a 5s timeout fallback) and closes `AdminClient`.
+   - On `@PreDestroy` ([`CommittedOffsetMovementCheck.java#L268`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L268)), gracefully closes the `AdminClient` instance.
 
 ---
 
