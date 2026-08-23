@@ -13,6 +13,7 @@ Configured in [`LivenessCheckersAutoConfiguration.java`](file:///c:/workdir/spri
 | Property | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `liveness.kafka.admin-timeout-ms` | `long` | `5000` | Timeout in milliseconds for Kafka `AdminClient` queries (`listOffsets`, `listConsumerGroupOffsets`). |
+| `liveness.kafka.max-stalled-checks` | `int` | `3` | The maximum number of consecutive stalled checks before marking the application as `BROKEN`. |
 
 ---
 

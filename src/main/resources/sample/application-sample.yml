@@ -3,3 +3,6 @@ liveness:
     # Timeout in milliseconds for Kafka AdminClient metadata and offset calls during health checks
     # Optional: default is 5000
     admin-timeout-ms: 5000
+    # The maximum number of consecutive stalled checks before marking the application as BROKEN
+    # Optional: default is 3
+    max-stalled-checks: 3

@@ -17,10 +17,13 @@ public class LivenessCheckersAutoConfiguration {
     public CommittedOffsetMovementCheck committedOffsetMovementCheck(
             @Value("${liveness.kafka.admin-timeout-ms:5000}")
             long adminTimeoutMs,
+            @Value("${liveness.kafka.max-stalled-checks:3}")
+            int maxStalledChecks,
             ApplicationContext applicationContext,
             KafkaAdmin kafkaAdmin) {
         return new CommittedOffsetMovementCheck(
                 adminTimeoutMs,
+                maxStalledChecks,
                 applicationContext,
                 kafkaAdmin.getConfigurationProperties()
         );

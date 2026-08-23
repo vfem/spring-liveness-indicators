@@ -58,7 +58,7 @@ class CommittedOffsetMovementCheckIT {
         Health health = committedOffsetMovementCheck.health();
         assertNotNull(health);
         assertEquals(Status.UP, health.getStatus());
-        assertEquals(5, health.getDetails().get("trackedConsumers"));
+        assertEquals(5, health.getDetails().get("trackedContainers"));
     }
 
     @Test
@@ -122,11 +122,19 @@ class CommittedOffsetMovementCheckIT {
         Health initialHealth = committedOffsetMovementCheck.health();
         assertEquals(Status.UP, initialHealth.getStatus());
 
-        Thread.sleep(2000);
+        Thread.sleep(1000);
 
-        //second check detects stalled consumer
+        //second check detects stalled consumer, attempt 1 (still UP)
         Health secondHealth = committedOffsetMovementCheck.health();
-        assertEquals(Status.DOWN, secondHealth.getStatus());
+        assertEquals(Status.UP, secondHealth.getStatus());
+
+        //third check detects stalled consumer, attempt 2 (still UP)
+        Health thirdHealth = committedOffsetMovementCheck.health();
+        assertEquals(Status.UP, thirdHealth.getStatus());
+
+        //fourth check detects stalled consumer, attempt 3 (reaches max-stalled-checks, marked DOWN)
+        Health fourthHealth = committedOffsetMovementCheck.health();
+        assertEquals(Status.DOWN, fourthHealth.getStatus());
 
         //then
         assertEquals(LivenessState.BROKEN, applicationAvailability.getLivenessState());

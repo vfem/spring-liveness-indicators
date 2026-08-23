@@ -3,13 +3,9 @@ package io.github.vfem.livenesscheck.spring.kafka;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
-import org.apache.kafka.clients.consumer.ConsumerGroupMetadata;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
-import org.apache.kafka.clients.consumer.internals.SubscriptionState;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
-import org.apache.kafka.common.utils.LogContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,11 +19,12 @@ import org.springframework.boot.actuate.health.Status;
 import org.springframework.boot.availability.AvailabilityChangeEvent;
 import org.springframework.boot.availability.LivenessState;
 import org.springframework.context.ApplicationContext;
+import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.MessageListenerContainer;
 
 import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -53,14 +50,14 @@ class CommittedOffsetMovementCheckTest {
     private AdminClient adminClient;
 
     private CommittedOffsetMovementCheck check;
-    private Set<KafkaConsumer<?, ?>> consumers;
+    private Set<MessageListenerContainer> containers;
 
     @BeforeEach
     void setUp() throws Exception {
         Map<String, Object> config = new HashMap<>();
         config.put("bootstrap.servers", "localhost:9092");
 
-        check = new CommittedOffsetMovementCheck(3000L, applicationContext, config);
+        check = new CommittedOffsetMovementCheck(3000L, 3, applicationContext, config);
 
         // Close initial admin client to prevent background connection retries to localhost:9092
         Field adminField = CommittedOffsetMovementCheck.class.getDeclaredField("adminClient");
@@ -73,23 +70,26 @@ class CommittedOffsetMovementCheckTest {
         // Inject mocked AdminClient
         adminField.set(check, adminClient);
 
-        // Get access to consumers set
-        Field consumersField = CommittedOffsetMovementCheck.class.getDeclaredField("consumers");
-        consumersField.setAccessible(true);
-        consumers = (Set<KafkaConsumer<?, ?>>) consumersField.get(check);
+        // Get access to containers set
+        Field containersField = CommittedOffsetMovementCheck.class.getDeclaredField("containers");
+        containersField.setAccessible(true);
+        containers = (Set<MessageListenerContainer>) containersField.get(check);
     }
 
     @Test
     void constructorValidation() {
         Map<String, Object> config = Map.of("bootstrap.servers", "localhost:9092");
 
-        assertThatThrownBy(() -> new CommittedOffsetMovementCheck(1000L, null, config))
+        assertThatThrownBy(() -> new CommittedOffsetMovementCheck(1000L, 3, null, config))
                 .isInstanceOf(NullPointerException.class);
 
-        assertThatThrownBy(() -> new CommittedOffsetMovementCheck(0L, applicationContext, config))
+        assertThatThrownBy(() -> new CommittedOffsetMovementCheck(0L, 3, applicationContext, config))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        assertThatThrownBy(() -> new CommittedOffsetMovementCheck(-5L, applicationContext, config))
+        assertThatThrownBy(() -> new CommittedOffsetMovementCheck(-5L, 3, applicationContext, config))
+                .isInstanceOf(IllegalArgumentException.class);
+        
+        assertThatThrownBy(() -> new CommittedOffsetMovementCheck(5000L, 0, applicationContext, config))
                 .isInstanceOf(IllegalArgumentException.class);
 
         CommittedOffsetMovementCheck defaultCheck = new CommittedOffsetMovementCheck(applicationContext, config);
@@ -98,12 +98,12 @@ class CommittedOffsetMovementCheckTest {
     }
 
     @Test
-    void isConsumersEmptyAndSize() throws Exception {
+    void isConsumersEmptyAndSize() {
         assertThat(check.isConsumersEmpty()).isTrue();
         assertThat(check.getConsumersSize()).isEqualTo(0);
 
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Set.of(new TopicPartition("t", 0)), Set.of());
-        consumers.add(consumer);
+        MessageListenerContainer container = createMockContainer("group1", Set.of(new TopicPartition("t", 0)), false);
+        containers.add(container);
 
         assertThat(check.isConsumersEmpty()).isFalse();
         assertThat(check.getConsumersSize()).isEqualTo(1);
@@ -119,14 +119,14 @@ class CommittedOffsetMovementCheckTest {
     void healthReturnsUpWhenProgressing() {
         Health health = check.health();
         assertThat(health.getStatus()).isEqualTo(Status.UP);
-        assertThat(health.getDetails()).containsEntry("trackedConsumers", 0);
+        assertThat(health.getDetails()).containsEntry("trackedContainers", 0);
     }
 
     @Test
-    void healthReturnsDownWhenStalled() throws Exception {
+    void healthReturnsDownWhenStalledExceedsThreshold() {
         TopicPartition tp = new TopicPartition("myTopic", 0);
-        KafkaConsumer<?, ?> consumer = createMockConsumer("testGroup", Set.of(tp), Set.of());
-        consumers.add(consumer);
+        MessageListenerContainer container = createMockContainer("testGroup", Set.of(tp), false);
+        containers.add(container);
 
         // Mock latest offset as 100
         ListOffsetsResult.ListOffsetsResultInfo info = new ListOffsetsResult.ListOffsetsResultInfo(100L, 0L, null);
@@ -147,11 +147,19 @@ class CommittedOffsetMovementCheckTest {
         Health health1 = check.health();
         assertThat(health1.getStatus()).isEqualTo(Status.UP);
 
-        // Check 2: offset still at 50 with latest 100 -> stalled (Health DOWN)
+        // Check 2: offset still at 50 with latest 100 -> stalled 1 (Health UP)
         Health health2 = check.health();
-        assertThat(health2.getStatus()).isEqualTo(Status.DOWN);
-        assertThat(health2.getDetails()).containsEntry("reason", "One or more Kafka consumers stalled while unconsumed messages remain");
-        assertThat(health2.getDetails()).containsEntry("trackedConsumers", 1);
+        assertThat(health2.getStatus()).isEqualTo(Status.UP);
+
+        // Check 3: stalled 2 (Health UP)
+        Health health3 = check.health();
+        assertThat(health3.getStatus()).isEqualTo(Status.UP);
+
+        // Check 4: stalled 3 (Health DOWN)
+        Health health4 = check.health();
+        assertThat(health4.getStatus()).isEqualTo(Status.DOWN);
+        assertThat(health4.getDetails()).containsEntry("reason", "One or more Kafka consumers stalled while unconsumed messages remain");
+        assertThat(health4.getDetails()).containsEntry("trackedContainers", 1);
 
         ArgumentCaptor<AvailabilityChangeEvent> eventCaptor = ArgumentCaptor.forClass(AvailabilityChangeEvent.class);
         verify(applicationContext).publishEvent(eventCaptor.capture());
@@ -159,42 +167,21 @@ class CommittedOffsetMovementCheckTest {
     }
 
     @Test
-    void checkConsumerProgressSkipsWhenNullGroupMetadata() {
-        KafkaConsumer<?, ?> consumer = mock(KafkaConsumer.class);
-        when(consumer.groupMetadata()).thenReturn(null);
-        consumers.add(consumer);
-
-        boolean result = check.checkConsumerProgress();
-        assertThat(result).isTrue();
-    }
-
-    @Test
     void checkConsumerProgressSkipsWhenNullGroupId() {
-        KafkaConsumer<?, ?> consumer = mock(KafkaConsumer.class);
-        ConsumerGroupMetadata metadata = mock(ConsumerGroupMetadata.class);
-        when(metadata.groupId()).thenReturn(null);
-        when(consumer.groupMetadata()).thenReturn(metadata);
-        consumers.add(consumer);
+        MessageListenerContainer container = mock(MessageListenerContainer.class);
+        ContainerProperties props = mock(ContainerProperties.class);
+        when(props.getGroupId()).thenReturn(null);
+        when(container.getContainerProperties()).thenReturn(props);
+        containers.add(container);
 
         boolean result = check.checkConsumerProgress();
         assertThat(result).isTrue();
     }
 
     @Test
-    void checkConsumerProgressSkipsWhenNoAssignedPartitions() throws Exception {
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Collections.emptySet(), Collections.emptySet());
-        consumers.add(consumer);
-
-        boolean result = check.checkConsumerProgress();
-        assertThat(result).isTrue();
-        verify(adminClient, never()).listOffsets(any());
-    }
-
-    @Test
-    void checkConsumerProgressSkipsWhenAllPartitionsPaused() throws Exception {
-        TopicPartition tp = new TopicPartition("topic1", 0);
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Set.of(tp), Set.of(tp));
-        consumers.add(consumer);
+    void checkConsumerProgressSkipsWhenNoAssignedPartitions() {
+        MessageListenerContainer container = createMockContainer("group1", Collections.emptySet(), false);
+        containers.add(container);
 
         boolean result = check.checkConsumerProgress();
         assertThat(result).isTrue();
@@ -202,10 +189,21 @@ class CommittedOffsetMovementCheckTest {
     }
 
     @Test
-    void checkConsumerProgressHandlesAdminClientListOffsetsException() throws Exception {
+    void checkConsumerProgressSkipsWhenContainerPaused() {
         TopicPartition tp = new TopicPartition("topic1", 0);
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Set.of(tp), Collections.emptySet());
-        consumers.add(consumer);
+        MessageListenerContainer container = createMockContainer("group1", Set.of(tp), true);
+        containers.add(container);
+
+        boolean result = check.checkConsumerProgress();
+        assertThat(result).isTrue();
+        verify(adminClient, never()).listOffsets(any());
+    }
+
+    @Test
+    void checkConsumerProgressHandlesAdminClientListOffsetsException() {
+        TopicPartition tp = new TopicPartition("topic1", 0);
+        MessageListenerContainer container = createMockContainer("group1", Set.of(tp), false);
+        containers.add(container);
 
         ListOffsetsResult listOffsetsResult = mock(ListOffsetsResult.class);
         KafkaFutureImpl<Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo>> future = new KafkaFutureImpl<>();
@@ -218,10 +216,10 @@ class CommittedOffsetMovementCheckTest {
     }
 
     @Test
-    void checkConsumerProgressHandlesAdminClientListOffsetsInterruptedException() throws Exception {
+    void checkConsumerProgressHandlesAdminClientListOffsetsInterruptedException() {
         TopicPartition tp = new TopicPartition("topic1", 0);
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Set.of(tp), Collections.emptySet());
-        consumers.add(consumer);
+        MessageListenerContainer container = createMockContainer("group1", Set.of(tp), false);
+        containers.add(container);
 
         ListOffsetsResult listOffsetsResult = mock(ListOffsetsResult.class);
         KafkaFutureImpl<Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo>> future = new KafkaFutureImpl<>();
@@ -235,10 +233,10 @@ class CommittedOffsetMovementCheckTest {
     }
 
     @Test
-    void checkConsumerProgressHandlesAdminClientListConsumerGroupOffsetsException() throws Exception {
+    void checkConsumerProgressHandlesAdminClientListConsumerGroupOffsetsException() {
         TopicPartition tp = new TopicPartition("topic1", 0);
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Set.of(tp), Collections.emptySet());
-        consumers.add(consumer);
+        MessageListenerContainer container = createMockContainer("group1", Set.of(tp), false);
+        containers.add(container);
 
         ListOffsetsResult.ListOffsetsResultInfo info = new ListOffsetsResult.ListOffsetsResultInfo(10L, 0L, null);
         ListOffsetsResult listOffsetsResult = mock(ListOffsetsResult.class);
@@ -258,10 +256,10 @@ class CommittedOffsetMovementCheckTest {
     }
 
     @Test
-    void checkConsumerProgressHandlesAdminClientListConsumerGroupOffsetsInterruptedException() throws Exception {
+    void checkConsumerProgressHandlesAdminClientListConsumerGroupOffsetsInterruptedException() {
         TopicPartition tp = new TopicPartition("topic1", 0);
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Set.of(tp), Collections.emptySet());
-        consumers.add(consumer);
+        MessageListenerContainer container = createMockContainer("group1", Set.of(tp), false);
+        containers.add(container);
 
         ListOffsetsResult.ListOffsetsResultInfo info = new ListOffsetsResult.ListOffsetsResultInfo(10L, 0L, null);
         ListOffsetsResult listOffsetsResult = mock(ListOffsetsResult.class);
@@ -282,10 +280,10 @@ class CommittedOffsetMovementCheckTest {
     }
 
     @Test
-    void checkConsumerProgressSkipsWhenLatestOffsetIsZeroOrNegative() throws Exception {
+    void checkConsumerProgressSkipsWhenLatestOffsetIsZeroOrNegative() {
         TopicPartition tp = new TopicPartition("topic1", 0);
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Set.of(tp), Collections.emptySet());
-        consumers.add(consumer);
+        MessageListenerContainer container = createMockContainer("group1", Set.of(tp), false);
+        containers.add(container);
 
         ListOffsetsResult.ListOffsetsResultInfo info = new ListOffsetsResult.ListOffsetsResultInfo(0L, 0L, null);
         ListOffsetsResult listOffsetsResult = mock(ListOffsetsResult.class);
@@ -305,10 +303,10 @@ class CommittedOffsetMovementCheckTest {
     }
 
     @Test
-    void checkConsumerProgressSucceedsWhenConsumerIsProgressing() throws Exception {
+    void checkConsumerProgressSucceedsWhenConsumerIsProgressing() {
         TopicPartition tp = new TopicPartition("topic1", 0);
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Set.of(tp), Collections.emptySet());
-        consumers.add(consumer);
+        MessageListenerContainer container = createMockContainer("group1", Set.of(tp), false);
+        containers.add(container);
 
         ListOffsetsResult.ListOffsetsResultInfo info = new ListOffsetsResult.ListOffsetsResultInfo(100L, 0L, null);
         ListOffsetsResult listOffsetsResult = mock(ListOffsetsResult.class);
@@ -338,10 +336,10 @@ class CommittedOffsetMovementCheckTest {
     }
 
     @Test
-    void checkConsumerProgressSucceedsWhenTopicFullyConsumed() throws Exception {
+    void checkConsumerProgressSucceedsWhenTopicFullyConsumed() {
         TopicPartition tp = new TopicPartition("topic1", 0);
-        KafkaConsumer<?, ?> consumer = createMockConsumer("group1", Set.of(tp), Collections.emptySet());
-        consumers.add(consumer);
+        MessageListenerContainer container = createMockContainer("group1", Set.of(tp), false);
+        containers.add(container);
 
         ListOffsetsResult.ListOffsetsResultInfo info = new ListOffsetsResult.ListOffsetsResultInfo(50L, 0L, null);
         ListOffsetsResult listOffsetsResult = mock(ListOffsetsResult.class);
@@ -364,25 +362,14 @@ class CommittedOffsetMovementCheckTest {
         verify(applicationContext, never()).publishEvent(any());
     }
 
-    private KafkaConsumer<?, ?> createMockConsumer(String groupId, Set<TopicPartition> assigned, Set<TopicPartition> paused) throws Exception {
-        KafkaConsumer<?, ?> consumer = mock(KafkaConsumer.class);
-        ConsumerGroupMetadata metadata = new ConsumerGroupMetadata(groupId);
-        lenient().when(consumer.groupMetadata()).thenReturn(metadata);
-
-        SubscriptionState subscriptionState = new SubscriptionState(new LogContext(), org.apache.kafka.clients.consumer.OffsetResetStrategy.EARLIEST);
-        if (!assigned.isEmpty()) {
-            subscriptionState.assignFromUser(new HashSet<>(assigned));
-        }
-        if (!paused.isEmpty()) {
-            for (TopicPartition tp : paused) {
-                subscriptionState.pause(tp);
-            }
-        }
-
-        Field subscriptionsField = KafkaConsumer.class.getDeclaredField("subscriptions");
-        subscriptionsField.setAccessible(true);
-        subscriptionsField.set(consumer, subscriptionState);
-
-        return consumer;
+    private MessageListenerContainer createMockContainer(String groupId, Set<TopicPartition> assigned, boolean paused) {
+        MessageListenerContainer container = mock(MessageListenerContainer.class);
+        ContainerProperties props = mock(ContainerProperties.class);
+        lenient().when(props.getGroupId()).thenReturn(groupId);
+        lenient().when(container.getContainerProperties()).thenReturn(props);
+        lenient().when(container.getAssignedPartitions()).thenReturn(assigned);
+        lenient().when(container.isContainerPaused()).thenReturn(paused);
+        lenient().when(container.isPauseRequested()).thenReturn(paused);
+        return container;
     }
 }

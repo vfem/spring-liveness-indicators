@@ -6,7 +6,6 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
@@ -22,14 +21,11 @@ import org.springframework.context.event.EventListener;
 import org.springframework.kafka.config.KafkaListenerConfigUtils;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
-import org.springframework.kafka.listener.KafkaMessageListenerContainer;
 import org.springframework.kafka.listener.MessageListenerContainer;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -50,36 +46,42 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
     private static final Logger log = LoggerFactory.getLogger(CommittedOffsetMovementCheck.class);
 
     private final long adminTimeoutMs;
+    private final int maxStalledChecks;
     private final ApplicationContext applicationContext;
     private final Map<String, Map<TopicPartition, OffsetAndMetadata>> groupsTopicPartitionOffsets = new HashMap<>();
-    private final Set<KafkaConsumer<?, ?>> consumers = new CopyOnWriteArraySet<>();
+    private final Map<TopicPartition, Integer> stalledChecksCount = new HashMap<>();
+    private final Set<MessageListenerContainer> containers = new CopyOnWriteArraySet<>();
     private final AdminClient adminClient;
 
     /**
      * Constructor for CommittedOffsetMovementCheck.
      *
      * @param adminTimeoutMs     the timeout in milliseconds for AdminClient calls
+     * @param maxStalledChecks   the maximum number of stalled checks before failing
      * @param applicationContext the Spring application context
      * @param kafkaAdminConfig   the Kafka Configuration
      */
     public CommittedOffsetMovementCheck(long adminTimeoutMs,
+                                        int maxStalledChecks,
                                         ApplicationContext applicationContext,
                                         Map<String, Object> kafkaAdminConfig) {
         Validate.notNull(applicationContext, "ApplicationContext is null");
         Validate.isTrue(adminTimeoutMs > 0, "adminTimeoutMs must be greater than 0");
+        Validate.isTrue(maxStalledChecks > 0, "maxStalledChecks must be greater than 0");
 
         this.adminTimeoutMs = adminTimeoutMs;
+        this.maxStalledChecks = maxStalledChecks;
         this.applicationContext = applicationContext;
         this.adminClient = AdminClient.create(kafkaAdminConfig);
     }
 
     public CommittedOffsetMovementCheck(ApplicationContext applicationContext,
                                         Map<String, Object> kafkaAdminConfig) {
-        this(5000L, applicationContext, kafkaAdminConfig);
+        this(5000L, 3, applicationContext, kafkaAdminConfig);
     }
 
     /**
-     * Initializes the check by extracting Kafka consumers from the listener containers.
+     * Initializes the check by extracting listener containers.
      */
     @EventListener(ApplicationReadyEvent.class)
     public void init() {
@@ -88,43 +90,17 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
                 KafkaListenerEndpointRegistry.class
         );
 
-        Collection<MessageListenerContainer> containers = registry.getAllListenerContainers();
+        Collection<MessageListenerContainer> allContainers = registry.getAllListenerContainers();
 
-        for (MessageListenerContainer container : containers) {
+        for (MessageListenerContainer container : allContainers) {
             if (container instanceof ConcurrentMessageListenerContainer<?, ?> concurrentContainer) {
-                List<? extends KafkaMessageListenerContainer<?, ?>> listenerContainers = concurrentContainer.getContainers();
-                listenerContainers.forEach(
-                        kafkaContainer -> consumers.add(extractKafkaConsumer(kafkaContainer))
-                );
-            }
-
-            if (container instanceof KafkaMessageListenerContainer<?, ?> kafkaContainer) {
-                KafkaConsumer<?, ?> kafkaConsumer = extractKafkaConsumer(kafkaContainer);
-                consumers.add(kafkaConsumer);
+                List<? extends MessageListenerContainer> listenerContainers = concurrentContainer.getContainers();
+                containers.addAll(listenerContainers);
+            } else {
+                containers.add(container);
             }
         }
-        log.info("CommittedOffsetMovementCheck initialized with {} Kafka consumers", consumers.size());
-    }
-
-    /**
-     * Extracts the KafkaConsumer instance from a KafkaMessageListenerContainer.
-     *
-     * @param kafkaContainer the KafkaMessageListenerContainer instance
-     * @return the extracted KafkaConsumer instance
-     */
-    private KafkaConsumer<?, ?> extractKafkaConsumer(KafkaMessageListenerContainer<?, ?> kafkaContainer) {
-        try {
-            Field consumerField = KafkaMessageListenerContainer.class.getDeclaredField("listenerConsumer");
-            consumerField.setAccessible(true);
-            Object listenerConsumer = consumerField.get(kafkaContainer);
-
-            Field consumerInnerField = listenerConsumer.getClass().getDeclaredField("consumer");
-            consumerInnerField.setAccessible(true);
-            return (KafkaConsumer<?, ?>) consumerInnerField.get(listenerConsumer);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            log.error("Failed to extract KafkaConsumer from KafkaMessageListenerContainer", e);
-            throw new RuntimeException(e);
-        }
+        log.info("CommittedOffsetMovementCheck initialized with {} Kafka containers", containers.size());
     }
 
     /**
@@ -137,12 +113,12 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
         boolean healthy = checkConsumerProgress();
         if (healthy) {
             return Health.up()
-                    .withDetail("trackedConsumers", consumers.size())
+                    .withDetail("trackedContainers", containers.size())
                     .build();
         }
         return Health.down()
                 .withDetail("reason", "One or more Kafka consumers stalled while unconsumed messages remain")
-                .withDetail("trackedConsumers", consumers.size())
+                .withDetail("trackedContainers", containers.size())
                 .build();
     }
 
@@ -155,29 +131,24 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
     public boolean checkConsumerProgress() {
         AtomicBoolean isHealthy = new AtomicBoolean(true);
 
-        consumers.forEach(consumer -> {
-            if (consumer.groupMetadata() == null || consumer.groupMetadata().groupId() == null) {
-                log.trace("Consumer group metadata is null, skipping");
+        containers.forEach(container -> {
+            String groupId = container.getContainerProperties().getGroupId();
+            if (groupId == null) {
+                log.trace("Container group id is null, skipping");
                 return;
             }
 
-            String groupId = consumer.groupMetadata().groupId();
-
-            Set<TopicPartition> assigned = extractAssigned(consumer);
-            Set<TopicPartition> paused = extractPaused(consumer);
-
-            if (assigned.isEmpty()) {
+            Collection<TopicPartition> assignedPartitions = container.getAssignedPartitions();
+            if (assignedPartitions == null || assignedPartitions.isEmpty()) {
                 log.trace("Consumer is not assigned to any topic partitions, skipping");
                 return;
             }
 
-            if (!paused.isEmpty()) {
-                log.trace("Consumer is paused on topic partitions: {}", paused);
-                assigned.removeAll(paused);
-            }
+            Set<TopicPartition> assigned = new HashSet<>(assignedPartitions);
+            boolean paused = container.isContainerPaused() || container.isPauseRequested();
 
-            if (assigned.isEmpty()) {
-                log.trace("All assigned partitions are paused for group {}, skipping", groupId);
+            if (paused) {
+                log.trace("Consumer is paused on topic partitions: {}", assigned);
                 return;
             }
 
@@ -259,18 +230,27 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
                 if (currentOffset >= latestOffsetForPartition) {
                     log.trace("Consumer group {} has reached the end of topic partition {}. Current offset: {}, latest offset: {}",
                             groupId, partition, currentOffset, latestOffsetForPartition);
+                    stalledChecksCount.remove(partition);
                     continue;
                 }
 
                 if (previousOffsetAndMetadata.offset() >= currentOffset) {
-                    log.error("Consumer group {} has not progressed on topic partition {} since last check. Previous offset: {}, current offset: {}",
-                            groupId, partition, previousOffsetAndMetadata.offset(), currentOffset);
-                    AvailabilityChangeEvent.publish(applicationContext, LivenessState.BROKEN);
-                    isHealthy.set(false);
+                    int stalledCount = stalledChecksCount.getOrDefault(partition, 0) + 1;
+                    if (stalledCount >= maxStalledChecks) {
+                        log.error("Consumer group {} has not progressed on topic partition {} for {} consecutive checks. Previous offset: {}, current offset: {}",
+                                groupId, partition, stalledCount, previousOffsetAndMetadata.offset(), currentOffset);
+                        AvailabilityChangeEvent.publish(applicationContext, LivenessState.BROKEN);
+                        isHealthy.set(false);
+                    } else {
+                        log.warn("Consumer group {} has not progressed on topic partition {} since last check. Attempt {} of {}. Previous offset: {}, current offset: {}",
+                                groupId, partition, stalledCount, maxStalledChecks, previousOffsetAndMetadata.offset(), currentOffset);
+                        stalledChecksCount.put(partition, stalledCount);
+                    }
                 } else {
                     log.trace("Consumer group {} has progressed on topic partition {}. Previous offset: {}, current offset: {}",
                             groupId, partition, previousOffsetAndMetadata.offset(), currentOffset);
                     previousOffset.put(partition, effectiveCurrent);
+                    stalledChecksCount.remove(partition);
                 }
             }
         });
@@ -278,54 +258,22 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
         return isHealthy.get();
     }
 
-    private Set<TopicPartition> extractAssigned(KafkaConsumer<?, ?> consumer) {
-        try {
-            Field subscriptionsField = KafkaConsumer.class.getDeclaredField("subscriptions");
-            subscriptionsField.setAccessible(true);
-            Object subscriptions = subscriptionsField.get(consumer);
-
-            Method assignedPartitionsMethod = subscriptions.getClass().getDeclaredMethod("assignedPartitions");
-            assignedPartitionsMethod.setAccessible(true);
-
-            return (Set<TopicPartition>) assignedPartitionsMethod.invoke(subscriptions);
-        } catch (NoSuchFieldException | NoSuchMethodException | InvocationTargetException | IllegalAccessException e) {
-            log.error("Failed to extract assigned partitions from KafkaConsumer", e);
-            throw new RuntimeException(e);
-        }
-    }
-
-    private Set<TopicPartition> extractPaused(KafkaConsumer<?, ?> consumer) {
-        try {
-            Field subscriptionsField = KafkaConsumer.class.getDeclaredField("subscriptions");
-            subscriptionsField.setAccessible(true);
-            Object subscriptions = subscriptionsField.get(consumer);
-
-            Method pausedPartitionsMethod = subscriptions.getClass().getDeclaredMethod("pausedPartitions");
-            pausedPartitionsMethod.setAccessible(true);
-
-            return (Set<TopicPartition>) pausedPartitionsMethod.invoke(subscriptions);
-        } catch (NoSuchFieldException | NoSuchMethodException | InvocationTargetException | IllegalAccessException e) {
-            log.error("Failed to extract assigned partitions from KafkaConsumer", e);
-            throw new RuntimeException(e);
-        }
-    }
-
     /**
-     * Checks if the consumers' collection is empty.
+     * Checks if the containers collection is empty.
      *
-     * @return true if the consumers' collection is empty; false otherwise
+     * @return true if the containers collection is empty; false otherwise
      */
     public boolean isConsumersEmpty() {
-        return consumers.isEmpty();
+        return containers.isEmpty();
     }
 
     /**
-     * Retrieves the size of the consumers' collection.
+     * Retrieves the size of the containers collection.
      *
-     * @return the number of consumers in the collection
+     * @return the number of containers in the collection
      */
     public int getConsumersSize() {
-        return consumers.size();
+        return containers.size();
     }
 
     /**
