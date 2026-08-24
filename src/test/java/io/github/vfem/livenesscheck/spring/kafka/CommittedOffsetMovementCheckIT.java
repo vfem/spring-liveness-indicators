@@ -49,8 +49,8 @@ class CommittedOffsetMovementCheckIT {
     void initExtractsKafkaConsumers() {
         // Verify that the consumers are extracted
         assertFalse(committedOffsetMovementCheck.isConsumersEmpty());
-        // Verify num of consumers
-        assertEquals(5, committedOffsetMovementCheck.getConsumersSize());
+        // Verify num of consumers (BaseConfig has 5 containers, TestListenerClass has 1)
+        assertEquals(6, committedOffsetMovementCheck.getConsumersSize());
     }
 
     @Test
@@ -58,7 +58,7 @@ class CommittedOffsetMovementCheckIT {
         Health health = committedOffsetMovementCheck.health();
         assertNotNull(health);
         assertEquals(Status.UP, health.getStatus());
-        assertEquals(5, health.getDetails().get("trackedContainers"));
+        assertEquals(6, health.getDetails().get("trackedContainers"));
     }
 
     @Test
