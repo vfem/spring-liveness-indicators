@@ -85,17 +85,32 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
      */
     @EventListener(ApplicationReadyEvent.class)
     public void init() {
-        KafkaListenerEndpointRegistry registry = applicationContext.getBean(
-                KafkaListenerConfigUtils.KAFKA_LISTENER_ENDPOINT_REGISTRY_BEAN_NAME,
-                KafkaListenerEndpointRegistry.class
-        );
+        try {
+            KafkaListenerEndpointRegistry registry = applicationContext.getBean(
+                    KafkaListenerConfigUtils.KAFKA_LISTENER_ENDPOINT_REGISTRY_BEAN_NAME,
+                    KafkaListenerEndpointRegistry.class
+            );
 
-        Collection<MessageListenerContainer> allContainers = registry.getAllListenerContainers();
+            Collection<MessageListenerContainer> registryContainers = registry.getAllListenerContainers();
+            for (MessageListenerContainer container : registryContainers) {
+                if (container instanceof ConcurrentMessageListenerContainer<?, ?> concurrentContainer) {
+                    List<? extends MessageListenerContainer> listenerContainers = concurrentContainer.getContainers();
+                    containers.addAll(listenerContainers);
+                } else {
+                    containers.add(container);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not find KafkaListenerEndpointRegistry bean: {}", e.getMessage());
+        }
 
-        for (MessageListenerContainer container : allContainers) {
+        Map<String, MessageListenerContainer> beanContainers = applicationContext.getBeansOfType(MessageListenerContainer.class);
+        for (MessageListenerContainer container : beanContainers.values()) {
             if (container instanceof ConcurrentMessageListenerContainer<?, ?> concurrentContainer) {
                 List<? extends MessageListenerContainer> listenerContainers = concurrentContainer.getContainers();
-                containers.addAll(listenerContainers);
+                if (listenerContainers != null && !listenerContainers.isEmpty()) {
+                    containers.addAll(listenerContainers);
+                }
             } else {
                 containers.add(container);
             }
