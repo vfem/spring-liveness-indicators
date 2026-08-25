@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -81,41 +82,76 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
     }
 
     /**
-     * Initializes the check by extracting listener containers.
+     * Registers an additional Kafka message listener container for offset monitoring.
+     *
+     * @param container the MessageListenerContainer to monitor
+     */
+    public void registerContainer(MessageListenerContainer container) {
+        if (container != null) {
+            unwrapContainer(container, this.containers);
+            log.info("Registered Kafka message listener container: {}", container);
+        }
+    }
+
+    /**
+     * Resolves all active Kafka message listener containers across all sources:
+     * 1. All KafkaListenerEndpointRegistry beans in the ApplicationContext.
+     * 2. All MessageListenerContainer beans in the ApplicationContext.
+     * 3. Any manually registered containers.
+     *
+     * @return a Set of all resolved MessageListenerContainer instances
+     */
+    public Set<MessageListenerContainer> resolveContainers() {
+        Set<MessageListenerContainer> rawContainers = new HashSet<>(this.containers);
+
+        try {
+            Map<String, KafkaListenerEndpointRegistry> registries = applicationContext.getBeansOfType(KafkaListenerEndpointRegistry.class);
+            for (KafkaListenerEndpointRegistry registry : registries.values()) {
+                rawContainers.addAll(registry.getAllListenerContainers());
+            }
+        } catch (Exception e) {
+            log.warn("Error resolving containers from KafkaListenerEndpointRegistry beans: {}", e.getMessage());
+        }
+
+        try {
+            Map<String, MessageListenerContainer> beanContainers = applicationContext.getBeansOfType(MessageListenerContainer.class);
+            rawContainers.addAll(beanContainers.values());
+        } catch (Exception e) {
+            log.warn("Error resolving MessageListenerContainer beans: {}", e.getMessage());
+        }
+
+        Set<MessageListenerContainer> resolved = new HashSet<>();
+        for (MessageListenerContainer container : rawContainers) {
+            unwrapContainer(container, resolved);
+        }
+
+        return resolved;
+    }
+
+    private void unwrapContainer(MessageListenerContainer container, Set<MessageListenerContainer> target) {
+        if (container == null) {
+            return;
+        }
+        if (container instanceof ConcurrentMessageListenerContainer<?, ?> concurrentContainer) {
+            List<? extends MessageListenerContainer> listenerContainers = concurrentContainer.getContainers();
+            if (listenerContainers != null && !listenerContainers.isEmpty()) {
+                target.addAll(listenerContainers);
+            } else {
+                target.add(concurrentContainer);
+            }
+        } else {
+            target.add(container);
+        }
+    }
+
+    /**
+     * Initializes the check by extracting listener containers from the application context.
      */
     @EventListener(ApplicationReadyEvent.class)
     public void init() {
-        try {
-            KafkaListenerEndpointRegistry registry = applicationContext.getBean(
-                    KafkaListenerConfigUtils.KAFKA_LISTENER_ENDPOINT_REGISTRY_BEAN_NAME,
-                    KafkaListenerEndpointRegistry.class
-            );
-
-            Collection<MessageListenerContainer> registryContainers = registry.getAllListenerContainers();
-            for (MessageListenerContainer container : registryContainers) {
-                if (container instanceof ConcurrentMessageListenerContainer<?, ?> concurrentContainer) {
-                    List<? extends MessageListenerContainer> listenerContainers = concurrentContainer.getContainers();
-                    containers.addAll(listenerContainers);
-                } else {
-                    containers.add(container);
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Could not find KafkaListenerEndpointRegistry bean: {}", e.getMessage());
-        }
-
-        Map<String, MessageListenerContainer> beanContainers = applicationContext.getBeansOfType(MessageListenerContainer.class);
-        for (MessageListenerContainer container : beanContainers.values()) {
-            if (container instanceof ConcurrentMessageListenerContainer<?, ?> concurrentContainer) {
-                List<? extends MessageListenerContainer> listenerContainers = concurrentContainer.getContainers();
-                if (listenerContainers != null && !listenerContainers.isEmpty()) {
-                    containers.addAll(listenerContainers);
-                }
-            } else {
-                containers.add(container);
-            }
-        }
-        log.info("CommittedOffsetMovementCheck initialized with {} Kafka containers", containers.size());
+        Set<MessageListenerContainer> resolved = resolveContainers();
+        this.containers.addAll(resolved);
+        log.info("CommittedOffsetMovementCheck initialized with {} Kafka containers", this.containers.size());
     }
 
     /**
@@ -125,28 +161,39 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
      */
     @Override
     public Health health() {
-        boolean healthy = checkConsumerProgress();
+        Set<MessageListenerContainer> currentContainers = resolveContainers();
+        boolean healthy = checkConsumerProgress(currentContainers);
         if (healthy) {
             return Health.up()
-                    .withDetail("trackedContainers", containers.size())
+                    .withDetail("trackedContainers", currentContainers.size())
                     .build();
         }
         return Health.down()
                 .withDetail("reason", "One or more Kafka consumers stalled while unconsumed messages remain")
-                .withDetail("trackedContainers", containers.size())
+                .withDetail("trackedContainers", currentContainers.size())
                 .build();
     }
 
     /**
-     * Checks the progress of the committed offsets for each consumer.
-     * If the offsets have not progressed, it publishes a liveness event indicating a broken state.
+     * Checks the progress of the committed offsets for all resolved consumers.
      *
      * @return true if all consumers are healthy or progressing, false if a consumer is stalled
      */
     public boolean checkConsumerProgress() {
+        return checkConsumerProgress(resolveContainers());
+    }
+
+    /**
+     * Checks the progress of the committed offsets for the given consumers.
+     * If the offsets have not progressed, it publishes a liveness event indicating a broken state.
+     *
+     * @param targetContainers the collection of containers to evaluate
+     * @return true if all consumers are healthy or progressing, false if a consumer is stalled
+     */
+    public boolean checkConsumerProgress(Collection<MessageListenerContainer> targetContainers) {
         AtomicBoolean isHealthy = new AtomicBoolean(true);
 
-        containers.forEach(container -> {
+        targetContainers.forEach(container -> {
             String groupId = container.getContainerProperties().getGroupId();
             if (groupId == null) {
                 log.trace("Container group id is null, skipping");
@@ -185,6 +232,13 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
                         groupId, e.getMessage());
                 Thread.currentThread().interrupt();
                 return;
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                log.error("Failed to retrieve latest offsets for topic partitions for group {}, error message = {}, skipping",
+                        groupId, e.getMessage());
+                return;
             } catch (Exception e) {
                 log.error("Failed to retrieve latest offsets for topic partitions for group {}, error message = {}, skipping",
                         groupId, e.getMessage());
@@ -204,6 +258,13 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
                 log.error("Failed to retrieve consumer group offsets for group {}, error message = {}, skipping",
                         groupId, e.getMessage());
                 Thread.currentThread().interrupt();
+                return;
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                log.error("Failed to retrieve consumer group offsets for group {}, error message = {}, skipping",
+                        groupId, e.getMessage());
                 return;
             } catch (Exception e) {
                 log.error("Failed to retrieve consumer group offsets for group {}, error message = {}, skipping",
@@ -279,7 +340,7 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
      * @return true if the containers collection is empty; false otherwise
      */
     public boolean isConsumersEmpty() {
-        return containers.isEmpty();
+        return resolveContainers().isEmpty();
     }
 
     /**
@@ -288,7 +349,7 @@ public final class CommittedOffsetMovementCheck implements HealthIndicator {
      * @return the number of containers in the collection
      */
     public int getConsumersSize() {
-        return containers.size();
+        return resolveContainers().size();
     }
 
     /**

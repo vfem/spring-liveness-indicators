@@ -6,13 +6,12 @@ This document covers the Spring Boot auto-configuration mechanisms, activation c
 
 ## ⚙️ Registration Mechanism
 
-The starter is registered as an auto-configuration class via Spring Boot's factory loading mechanism:
+The starter is registered as an auto-configuration class via Spring Boot 3's auto-configuration imports mechanism:
 
-- **Descriptor**: [`src/main/resources/META-INF/spring.factories`](file:///c:/workdir/spring-liveness-indicators/src/main/resources/META-INF/spring.factories)
+- **Descriptor**: [`src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`](file:///c:/workdir/spring-liveness-indicators/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports)
 - **Entry**:
-  ```properties
-  org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
-      io.github.vfem.livenesscheck.spring.kafka.LivenessCheckersAutoConfiguration
+  ```text
+  io.github.vfem.livenesscheck.spring.kafka.LivenessCheckersAutoConfiguration
   ```
 
 ---
@@ -37,18 +36,19 @@ All 4 conditions must pass simultaneously:
 Source: [`LivenessCheckersAutoConfiguration.java`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/LivenessCheckersAutoConfiguration.java)
 
 ```java
-@Configuration
+@AutoConfiguration
 @Conditional(LivenessCheckerCondition.class)
 public class LivenessCheckersAutoConfiguration {
 
     @Bean
-    @Autowired
     public CommittedOffsetMovementCheck committedOffsetMovementCheck(
             @Value("${liveness.kafka.admin-timeout-ms:5000}") long adminTimeoutMs,
+            @Value("${liveness.kafka.max-stalled-checks:3}") int maxStalledChecks,
             ApplicationContext applicationContext,
             KafkaAdmin kafkaAdmin) {
         return new CommittedOffsetMovementCheck(
                 adminTimeoutMs,
+                maxStalledChecks,
                 applicationContext,
                 kafkaAdmin.getConfigurationProperties()
         );
@@ -59,7 +59,8 @@ public class LivenessCheckersAutoConfiguration {
 ### Injected Dependencies:
 - **`KafkaAdmin`**: Provided by Spring Kafka configuration; used to retrieve `kafkaAdmin.getConfigurationProperties()` for creating the Kafka `AdminClient`.
 - **`ApplicationContext`**: Used to look up the `KafkaListenerEndpointRegistry` and publish `AvailabilityChangeEvent`.
-- **`adminTimeoutMs`**: Injected with sensible default (5000ms).
+- **`adminTimeoutMs`**: Injected with default (`5000` ms).
+- **`maxStalledChecks`**: Injected with default (`3`).
 
 ---
 

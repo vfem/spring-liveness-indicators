@@ -11,7 +11,7 @@ helping you ensure the health of your Kafka-based applications.
 
 1. Ensure you meet the requirements:
     - Java 17 or higher
-    - Spring Boot 2.4.x
+    - Spring Boot 3.4.x (or 3.x)
     - Maven 3.6.0 or higher
     - Kafka
 
@@ -27,13 +27,12 @@ helping you ensure the health of your Kafka-based applications.
            enabled: true
    ```
 
-3. Configure liveness monitoring in `application.properties`:
+3. Configure liveness monitoring in `application.properties` / `application.yml` (optional):
    ```yaml
    liveness:
      kafka:
-       scheduled: true              # Enable periodic checks
-       check-period-sec: 600       # Check interval
-       check-initial-delay-sec: 600 # Initial delay
+       admin-timeout-ms: 5000       # Timeout for Kafka AdminClient operations (ms)
+       max-stalled-checks: 3        # Consecutive stalled checks before marking broken
    ```
 
 ## Features
@@ -42,33 +41,28 @@ helping you ensure the health of your Kafka-based applications.
 - Monitors Kafka consumer progress for Spring Kafka topic listeners
 - Evaluates consumer state and group health
 - Checks if topics are empty or fully consumed
-- Provides automatic monitoring on startup
 - Exposes health state via `/actuator/health/liveness` endpoint
-
 
 ## Requirements
 
 - Java 17 or higher
-- Spring Boot 2.4.x
+- Spring Boot 3.4.x (or 3.x)
 - Maven 3.6.0 or higher
 - Kafka
 
 ## Configuration
 
-The library beans can be configured using the `application.properties` file. Here are some key properties:
+The library beans can be configured using the `application.yml` file. Here are the key properties:
 
 ```yaml
 liveness:
   kafka:
-    #Flag to enable/disable the scheduled periodic offset movement check
-    #Optional: default is true
-    scheduled: true
-    #The period in seconds between checks
-    #Optional: default is 600
-    check-period-sec: 600
-    #The initial delay in seconds before the first check
-    #Optional: default is 600
-    check-initial-delay-sec: 600
+    # Timeout in milliseconds for Kafka AdminClient operations
+    # Optional: default is 5000
+    admin-timeout-ms: 5000
+    # Maximum consecutive stalled checks before reporting BROKEN
+    # Optional: default is 3
+    max-stalled-checks: 3
 ```
 
 ## Testing

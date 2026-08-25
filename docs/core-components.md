@@ -18,15 +18,20 @@ This document describes the internals of [`CommittedOffsetMovementCheck`](file:/
 
 ---
 
-## 🪞 Container-Based Extraction (Thread-Safe)
+## 🪞 Container Source Resolution & Extraction
 
-To monitor offsets safely without causing `ConcurrentModificationException` internally in the underlying Kafka consumer, the class leverages Spring Kafka's `MessageListenerContainer` native APIs:
+To monitor offsets safely across all Kafka consumers without causing `ConcurrentModificationException` internally in the underlying Kafka consumer poll loops, the class resolves containers dynamically and natively via Spring Kafka's `MessageListenerContainer` APIs:
 
-1. **Hierarchy Traversal**:
-   - For `ConcurrentMessageListenerContainer`: Iterates over child `MessageListenerContainer` instances via `getContainers()`.
-   - For standard `KafkaMessageListenerContainer`: Used directly.
-   
-2. **Partition Subscriptions & Pause States**:
+1. **Covered Container Sources**:
+   - **All `KafkaListenerEndpointRegistry` Beans**: Automatically discovers all `@KafkaListener` method and class listeners across all registries in the application context (default and custom-named registries).
+   - **All `MessageListenerContainer` Beans**: Automatically discovers standalone `ConcurrentMessageListenerContainer` and single-threaded `KafkaMessageListenerContainer` beans.
+   - **Programmatic & Dynamic Containers**: Dynamically detects endpoints registered at runtime in `KafkaListenerEndpointRegistry` or added explicitly via `check.registerContainer(MessageListenerContainer)`.
+
+2. **Hierarchy Unwrapping & Traversal**:
+   - For `ConcurrentMessageListenerContainer`: Unwraps into child `KafkaMessageListenerContainer` instances via `getContainers()`, ensuring each consumer thread is tracked independently with its specific partition assignment. If child containers are not yet started or empty, tracks the container itself.
+   - For standard `KafkaMessageListenerContainer`: Tracked directly.
+
+3. **Partition Subscriptions & Pause States**:
    - Invokes `container.getContainerProperties().getGroupId()` to extract the group ID.
    - Invokes `container.getAssignedPartitions()` to get the assigned `Collection<TopicPartition>`.
    - Invokes `container.isContainerPaused()` and `container.isPauseRequested()` to determine if the container is paused, excluding it from evaluation if true.

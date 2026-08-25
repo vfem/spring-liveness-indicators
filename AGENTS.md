@@ -9,7 +9,7 @@ Instructions and guidelines for AI coding agents operating on the `spring-livene
 - **Project**: Spring Liveness Indicators (`spring-liveness-indicators`)
 - **Type**: Spring Boot Auto-Configuration Starter / Library
 - **Purpose**: Periodically monitors Kafka consumers for committed offset progress across assigned topic partitions. If a consumer stalls while pending messages remain, it marks the application as unhealthy by publishing `AvailabilityChangeEvent(LivenessState.BROKEN)` to Spring Boot Actuator (`/actuator/health/liveness`).
-- **Tech Stack**: Java 17, Spring Boot 2.4.x, Spring Kafka, Spring Boot Actuator, Apache Maven.
+- **Tech Stack**: Java 17, Spring Boot 3.4.x, Spring Kafka, Spring Boot Actuator, Apache Maven.
 
 ---
 
@@ -32,7 +32,7 @@ Before reading entire source code files, consult the modular wiki in [`docs/`](f
 ## 🧭 Source Code Map
 
 - **Auto-Configuration**:
-  - Registration: [`src/main/resources/META-INF/spring.factories`](file:///c:/workdir/spring-liveness-indicators/src/main/resources/META-INF/spring.factories)
+  - Registration: [`src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`](file:///c:/workdir/spring-liveness-indicators/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports)
   - AutoConfig Bean: [`LivenessCheckersAutoConfiguration.java`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/LivenessCheckersAutoConfiguration.java)
   - Activation Condition: [`LivenessCheckerCondition.java`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/LivenessCheckerCondition.java)
 - **Core Engine**:

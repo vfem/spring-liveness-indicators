@@ -49,8 +49,8 @@ class CommittedOffsetMovementCheckIT {
     void initExtractsKafkaConsumers() {
         // Verify that the consumers are extracted
         assertFalse(committedOffsetMovementCheck.isConsumersEmpty());
-        // Verify num of consumers (BaseConfig has 5 containers, TestListenerClass has 1)
-        assertEquals(6, committedOffsetMovementCheck.getConsumersSize());
+        // Verify num of consumers (BaseConfig has 4 method listeners, TestListenerClass has 1 class listener, ManualContainerConfig has 2 manual beans = 7)
+        assertEquals(7, committedOffsetMovementCheck.getConsumersSize());
     }
 
     @Test
@@ -58,7 +58,7 @@ class CommittedOffsetMovementCheckIT {
         Health health = committedOffsetMovementCheck.health();
         assertNotNull(health);
         assertEquals(Status.UP, health.getStatus());
-        assertEquals(6, health.getDetails().get("trackedContainers"));
+        assertEquals(7, health.getDetails().get("trackedContainers"));
     }
 
     @Test
@@ -66,17 +66,17 @@ class CommittedOffsetMovementCheckIT {
         kafkaTemplate.send(
                 MessageBuilder.withPayload("test_payload")
                         .setHeader(KafkaHeaders.TOPIC, "classTopic")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key")
+                        .setHeader(KafkaHeaders.KEY, "test_key")
                         .build());
         kafkaTemplate.send(
                 MessageBuilder.withPayload("test_payload2")
                         .setHeader(KafkaHeaders.TOPIC, "classTopic")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key2")
+                        .setHeader(KafkaHeaders.KEY, "test_key2")
                         .build());
         kafkaTemplate.send(
                 MessageBuilder.withPayload("test_payload3")
                         .setHeader(KafkaHeaders.TOPIC, "classTopic")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key3")
+                        .setHeader(KafkaHeaders.KEY, "test_key3")
                         .build());
         kafkaTemplate.flush();
         Thread.sleep(5 * 1000 + 1000);
@@ -113,7 +113,7 @@ class CommittedOffsetMovementCheckIT {
         kafkaTemplate.send(
                 MessageBuilder.withPayload("test_payload")
                         .setHeader(KafkaHeaders.TOPIC, "slowMethodTopic")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key")
+                        .setHeader(KafkaHeaders.KEY, "test_key")
                         .build());
         kafkaTemplate.flush();
 
@@ -155,17 +155,17 @@ class CommittedOffsetMovementCheckIT {
         kafkaTemplate.send(
                 MessageBuilder.withPayload("test_payload")
                         .setHeader(KafkaHeaders.TOPIC, "classTopic")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key")
+                        .setHeader(KafkaHeaders.KEY, "test_key")
                         .build());
         kafkaTemplate.send(
                 MessageBuilder.withPayload("test_payload2")
                         .setHeader(KafkaHeaders.TOPIC, "classTopic")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key2")
+                        .setHeader(KafkaHeaders.KEY, "test_key2")
                         .build());
         kafkaTemplate.send(
                 MessageBuilder.withPayload("test_payload3")
                         .setHeader(KafkaHeaders.TOPIC, "classTopic")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "test_key3")
+                        .setHeader(KafkaHeaders.KEY, "test_key3")
                         .build());
         kafkaTemplate.flush();
         Thread.sleep(2000);
@@ -185,12 +185,12 @@ class CommittedOffsetMovementCheckIT {
         kafkaTemplate.send(
                 MessageBuilder.withPayload("payload1")
                         .setHeader(KafkaHeaders.TOPIC, "methodTopic1")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "k1")
+                        .setHeader(KafkaHeaders.KEY, "k1")
                         .build());
         kafkaTemplate.send(
                 MessageBuilder.withPayload("payload2")
                         .setHeader(KafkaHeaders.TOPIC, "methodTopic2")
-                        .setHeader(KafkaHeaders.MESSAGE_KEY, "k2")
+                        .setHeader(KafkaHeaders.KEY, "k2")
                         .build());
         kafkaTemplate.flush();
 
