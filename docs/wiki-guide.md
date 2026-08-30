@@ -14,7 +14,7 @@ This wiki is structured to allow AI coding agents to understand the entire archi
 2. **Consult specific topic files**:
    - For configuration changes: See [Configuration Reference](file:///c:/workdir/spring-liveness-indicators/docs/configuration-reference.md).
    - For auto-config & activation conditions: See [Auto-Configuration](file:///c:/workdir/spring-liveness-indicators/docs/auto-configuration.md).
-   - For offset checking & consumer reflection details: See [Core Components](file:///c:/workdir/spring-liveness-indicators/docs/core-components.md).
+   - For offset checking & container resolution details: See [Core Components](file:///c:/workdir/spring-liveness-indicators/docs/core-components.md).
    - For test structure and assertions: See [Testing Guide](file:///c:/workdir/spring-liveness-indicators/docs/testing-guide.md).
 3. **Follow Direct Symbol Links**: Only view targeted line numbers in code if you need to perform an exact code edit (e.g. using specific line-range links provided in the wiki).
 

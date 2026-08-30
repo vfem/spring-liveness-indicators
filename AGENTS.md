@@ -22,7 +22,7 @@ Before reading entire source code files, consult the modular wiki in [`docs/`](f
 | **Wiki Entrypoint & Map** | [`docs/README.md`](file:///c:/workdir/spring-liveness-indicators/docs/README.md) |
 | **Architecture & Event Flow** | [`docs/architecture.md`](file:///c:/workdir/spring-liveness-indicators/docs/architecture.md) |
 | **Auto-Configuration & Conditions** | [`docs/auto-configuration.md`](file:///c:/workdir/spring-liveness-indicators/docs/auto-configuration.md) |
-| **Core Checking Logic & Reflection** | [`docs/core-components.md`](file:///c:/workdir/spring-liveness-indicators/docs/core-components.md) |
+| **Core Checking Logic & Container Resolution** | [`docs/core-components.md`](file:///c:/workdir/spring-liveness-indicators/docs/core-components.md) |
 | **Properties & Configuration** | [`docs/configuration-reference.md`](file:///c:/workdir/spring-liveness-indicators/docs/configuration-reference.md) |
 | **Testing Guide & Test Scenarios** | [`docs/testing-guide.md`](file:///c:/workdir/spring-liveness-indicators/docs/testing-guide.md) |
 | **Wiki Maintenance Protocol** | [`docs/wiki-guide.md`](file:///c:/workdir/spring-liveness-indicators/docs/wiki-guide.md) |
@@ -69,13 +69,13 @@ Before reading entire source code files, consult the modular wiki in [`docs/`](f
 
 1. **Activation Conditions**:
    - The starter must **only** activate if both Spring Kafka and Actuator are present, AND `management.endpoint.health.probes.enabled=true` AND `management.health.livenessstate.enabled=true`.
-2. **Reflection Handling**:
-   - `KafkaConsumer` instances are extracted via reflection from `ConcurrentMessageListenerContainer` and `KafkaMessageListenerContainer` listener consumers without modifying user code.
+2. **Dynamic Container Resolution**:
+   - `MessageListenerContainer` instances are resolved dynamically via Spring ApplicationContext (`KafkaListenerEndpointRegistry`, `MessageListenerContainer` beans, and explicit registration) and inspected via public container APIs without modifying user code.
 3. **Partition State Handling**:
-   - Paused partitions (`extractPaused`) must always be excluded from evaluation.
+   - Paused partitions (`isContainerPaused()`, `isPauseRequested()`) must always be excluded from evaluation.
    - Topics that are empty (`latestOffset <= 0`) or fully consumed (`currentOffset >= latestOffset`) must **never** trigger `LivenessState.BROKEN`.
 4. **Graceful Teardown**:
-   - `CommittedOffsetMovementCheck.shutdown()` (@PreDestroy) must cleanly terminate the `ScheduledExecutorService` and close `AdminClient`.
+   - `CommittedOffsetMovementCheck.shutdown()` (@PreDestroy) must cleanly close `AdminClient`.
 
 ---
 
@@ -84,7 +84,7 @@ Before reading entire source code files, consult the modular wiki in [`docs/`](f
 Whenever you modify or extend this repository, update the documentation wiki accordingly:
 
 - [ ] If new configuration properties are added: Update [`docs/configuration-reference.md`](file:///c:/workdir/spring-liveness-indicators/docs/configuration-reference.md) and [`src/main/resources/sample/application-sample.yml`](file:///c:/workdir/spring-liveness-indicators/src/main/resources/sample/application-sample.yml).
-- [ ] If offset checking or reflection logic changes: Update [`docs/core-components.md`](file:///c:/workdir/spring-liveness-indicators/docs/core-components.md).
+- [ ] If offset checking or container resolution logic changes: Update [`docs/core-components.md`](file:///c:/workdir/spring-liveness-indicators/docs/core-components.md).
 - [ ] If auto-configuration conditions change: Update [`docs/auto-configuration.md`](file:///c:/workdir/spring-liveness-indicators/docs/auto-configuration.md).
 - [ ] If tests or test scenarios are added: Update [`docs/testing-guide.md`](file:///c:/workdir/spring-liveness-indicators/docs/testing-guide.md).
 - [ ] Run `mvn test-compile` or `mvn test` to verify zero regression.
