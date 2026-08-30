@@ -68,6 +68,7 @@ management:
 liveness:
   kafka:
     admin-timeout-ms: 3000
+    max-stalled-checks: 3
 ```
 
 ---

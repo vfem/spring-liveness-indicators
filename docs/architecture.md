@@ -20,7 +20,7 @@ flowchart TD
         Topics["Topic Partitions"]
     end
 
-    LivenessCheck -->|Extract Consumers on ApplicationReadyEvent| Registry
+    LivenessCheck -->|Discover Containers on ApplicationReadyEvent| Registry
     Actuator -->|Invoke health() on-demand| LivenessCheck
     LivenessCheck -->|Query: listOffsets & listConsumerGroupOffsets| Admin
     Admin --> Topics
@@ -38,13 +38,13 @@ flowchart TD
    - Instantiates [`CommittedOffsetMovementCheck`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java) as a Spring Actuator `HealthIndicator`.
 
 2. **Initialization (`init()`)**:
-   - Triggered on [`ApplicationReadyEvent`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L73-L101).
-   - Scans `KafkaListenerEndpointRegistry` for all `ConcurrentMessageListenerContainer` and `KafkaMessageListenerContainer` instances.
-   - Extracts internal `KafkaConsumer` instances via reflection.
+   - Triggered on [`ApplicationReadyEvent`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L150-L155).
+   - Resolves and caches all `ConcurrentMessageListenerContainer` and `KafkaMessageListenerContainer` instances across all `KafkaListenerEndpointRegistry` and `MessageListenerContainer` beans.
 
 3. **On-Demand Offset Evaluation (`health() -> checkConsumerProgress()`)**:
-   - For each extracted `KafkaConsumer`:
-     1. Extracts active `assignedPartitions` and excludes `pausedPartitions`.
+   - Dynamically resolves current listener containers via [`resolveContainers()`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L104-L129).
+   - For each tracked `MessageListenerContainer`:
+     1. Extracts active `assignedPartitions` and skips paused containers (`isContainerPaused()` or `isPauseRequested()`).
      2. Queries Kafka `AdminClient.listOffsets(OffsetSpec.latest())` for latest partition end offsets.
      3. Queries Kafka `AdminClient.listConsumerGroupOffsets(groupId)` for committed consumer offsets.
      4. Compares the offsets against the stored history in `groupsTopicPartitionOffsets`.
@@ -55,7 +55,7 @@ flowchart TD
    - **Normal condition**: If consumer has reached the end or moved forward, state remains intact, the cached offset is updated, and returns `Health.up()`.
 
 5. **Teardown (`shutdown()`)**:
-   - On `@PreDestroy` ([`CommittedOffsetMovementCheck.java#L268`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L268)), gracefully closes the `AdminClient` instance.
+   - On `@PreDestroy` ([`CommittedOffsetMovementCheck.java#L358-L367`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L358-L367)), gracefully closes the `AdminClient` instance.
 
 ---
 

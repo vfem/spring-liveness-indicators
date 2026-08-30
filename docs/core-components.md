@@ -45,8 +45,17 @@ When Spring Boot Actuator queries `/actuator/health` or `/actuator/health/livene
 ```java
 @Override
 public Health health() {
-    boolean healthy = checkConsumerProgress();
-    return healthy ? Health.up().build() : Health.down().build();
+    Set<MessageListenerContainer> currentContainers = resolveContainers();
+    boolean healthy = checkConsumerProgress(currentContainers);
+    if (healthy) {
+        return Health.up()
+                .withDetail("trackedContainers", currentContainers.size())
+                .build();
+    }
+    return Health.down()
+            .withDetail("reason", "One or more Kafka consumers stalled while unconsumed messages remain")
+            .withDetail("trackedContainers", currentContainers.size())
+            .build();
 }
 ```
 
@@ -95,7 +104,7 @@ flowchart TD
 
 ## 🛑 Lifecycle & Teardown
 
-- **Method**: [`shutdown()`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L268-L278) (annotated with `@PreDestroy`)
+- **Method**: [`shutdown()`](file:///c:/workdir/spring-liveness-indicators/src/main/java/io/github/vfem/livenesscheck/spring/kafka/CommittedOffsetMovementCheck.java#L358-L367) (annotated with `@PreDestroy`)
 - **Teardown Flow**:
   1. Closes the `AdminClient` instance cleanly.
 
